@@ -10,10 +10,12 @@ Usage:
     python mayura_download.py --publication sudha --date 26/03/2026 --pages 64 --output sudha_w13.pdf
 
 Dependencies:
-    pip install requests aiohttp Pillow
+    pip install requests aiohttp Pillow pypdf
 """
 
 import argparse
+import site
+import sys
 from pathlib import Path
 from datetime import datetime
 
@@ -146,6 +148,10 @@ def default_quality_for(publication: str) -> int:
     return 95
 
 
+def default_standardize_pages_for(publication: str) -> bool:
+    return False
+
+
 def date_ddmmyyyy_to_yyyymmdd(date_str: str) -> str:
     return datetime.strptime(date_str, "%d/%m/%Y").strftime("%Y%m%d")
 
@@ -256,6 +262,23 @@ def get_prajavani_image_urls(data_payload: dict, index_payload: dict | None = No
     return image_urls
 
 
+def get_prajavani_pdf_urls(data_payload: dict, index_payload: dict | None = None) -> list[str]:
+    data_url_suffix = data_payload.get("data_url_suffix")
+    data = (index_payload or data_payload).get("data", index_payload or data_payload)
+    sections = data.get("sections", [])
+
+    if not data_url_suffix or not sections:
+        raise RuntimeError("Unexpected Prajavani data payload shape.")
+
+    pdf_urls = []
+    for section in sections:
+        for page in section.get("pages", []):
+            pdf_file = page.get("pdfFile")
+            if pdf_file:
+                pdf_urls.append(f"{data_url_suffix}{pdf_file}")
+    return pdf_urls
+
+
 def probe_page_count(dir_prefix: str, stem: str, suffix: str,
                      max_pages: int = 200) -> int:
     """
@@ -364,6 +387,34 @@ async def download_images_from_urls_async(
     return image_paths
 
 
+async def download_files_from_urls_async(
+    urls: list[str], tmp_dir: Path, suffix: str, concurrency: int = 4
+) -> list[Path]:
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; MayuraDownloader/1.0)"}
+    semaphore = asyncio.Semaphore(concurrency)
+    total_files = len(urls)
+
+    async with aiohttp.ClientSession(headers=headers) as session:
+        tasks = [
+            download_page(
+                session,
+                url,
+                tmp_dir / f"page_{idx:04d}.{suffix}",
+                idx,
+                total_files,
+                semaphore,
+            )
+            for idx, url in enumerate(urls, start=1)
+        ]
+        results = await asyncio.gather(*tasks)
+
+    file_paths = [p for p in results if p is not None]
+    failed = total_files - len(file_paths)
+    if failed:
+        raise RuntimeError(f"{failed} file(s) failed to download out of {total_files}.")
+    return file_paths
+
+
 def download_images(dir_prefix: str, stem: str, suffix: str,
                     total_pages: int, tmp_dir: Path) -> list[Path]:
     """Sync wrapper around the async downloader."""
@@ -374,8 +425,63 @@ def download_images_from_urls(image_urls: list[str], tmp_dir: Path, concurrency:
     return asyncio.run(download_images_from_urls_async(image_urls, tmp_dir, concurrency=concurrency))
 
 
+def download_files_from_urls(urls: list[str], tmp_dir: Path, suffix: str, concurrency: int = 4) -> list[Path]:
+    return asyncio.run(download_files_from_urls_async(urls, tmp_dir, suffix=suffix, concurrency=concurrency))
+
+
+def merge_pdfs(pdf_paths: list[Path], output_pdf: Path) -> None:
+    PdfReader = PdfWriter = None
+
+    def try_import():
+        nonlocal PdfReader, PdfWriter
+        try:
+            from pypdf import PdfReader as Reader, PdfWriter as Writer
+            PdfReader, PdfWriter = Reader, Writer
+            return True
+        except ModuleNotFoundError:
+            pass
+
+        try:
+            from PyPDF2 import PdfReader as Reader, PdfWriter as Writer
+            PdfReader, PdfWriter = Reader, Writer
+            return True
+        except ModuleNotFoundError:
+            return False
+
+    if not try_import():
+        user_site = site.getusersitepackages()
+        if user_site and user_site not in sys.path:
+            sys.path.append(user_site)
+        if not try_import():
+            raise RuntimeError(
+                f"PDF merge dependency missing for interpreter {sys.executable}. "
+                f"Install with: {sys.executable} -m pip install pypdf"
+            )
+
+    if not pdf_paths:
+        raise RuntimeError("No PDFs to merge.")
+
+    print(f"\nBuilding merged PDF from {len(pdf_paths)} page PDFs …")
+    writer = PdfWriter()
+    total_pages = 0
+    for pdf_path in pdf_paths:
+        reader = PdfReader(str(pdf_path))
+        page_count = len(reader.pages)
+        total_pages += page_count
+        for page in reader.pages:
+            writer.add_page(page)
+        print(f"  {pdf_path.name}  {page_count} page(s)")
+
+    with output_pdf.open("wb") as fh:
+        writer.write(fh)
+
+    size_mb = output_pdf.stat().st_size / 1_048_576
+    print(f"\n✅  PDF saved → {output_pdf}  ({size_mb:.1f} MB, {total_pages} merged page(s))")
+
+
 def images_to_pdf(image_paths: list[Path], output_pdf: Path,
-                  quality: int = 75, scale: float = 1.0) -> None:
+                  quality: int = 75, scale: float = 1.0,
+                  standardize_pages: bool = False) -> None:
     """
     Embeds pages as raw DCTDecode JPEG objects in a hand-built PDF.
 
@@ -394,7 +500,7 @@ def images_to_pdf(image_paths: list[Path], output_pdf: Path,
     print(f"\nBuilding PDF (scale={scale}, quality={quality}) "
           f"from {len(image_paths)} pages …")
 
-    jpeg_pages = []
+    prepared_images = []
     for p in image_paths:
         try:
             img = Image.open(p).convert("RGB")
@@ -402,16 +508,30 @@ def images_to_pdf(image_paths: list[Path], output_pdf: Path,
                 new_w = max(1, int(img.width  * scale))
                 new_h = max(1, int(img.height * scale))
                 img = img.resize((new_w, new_h), Image.LANCZOS)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=quality, optimize=True)
-            data = buf.getvalue()
-            print(f"  {p.name}  {p.stat().st_size // 1024}KB → {len(data) // 1024}KB")
-            jpeg_pages.append((data, img.width, img.height))
+            prepared_images.append((p, img))
         except Exception as e:
             print(f"  ✗ skipping {p.name}: {e}")
 
-    if not jpeg_pages:
+    if not prepared_images:
         raise RuntimeError("All images failed to process.")
+
+    canvas_w = max(img.width for _, img in prepared_images)
+    canvas_h = max(img.height for _, img in prepared_images)
+
+    jpeg_pages = []
+    for p, img in prepared_images:
+        page_img = img
+        if standardize_pages and (img.width != canvas_w or img.height != canvas_h):
+            canvas = Image.new("RGB", (canvas_w, canvas_h), "white")
+            offset = ((canvas_w - img.width) // 2, (canvas_h - img.height) // 2)
+            canvas.paste(img, offset)
+            page_img = canvas
+
+        buf = io.BytesIO()
+        page_img.save(buf, format="JPEG", quality=quality, optimize=True)
+        data = buf.getvalue()
+        print(f"  {p.name}  {p.stat().st_size // 1024}KB → {len(data) // 1024}KB")
+        jpeg_pages.append((data, page_img.width, page_img.height))
 
     # Hand-built PDF: embed raw JPEG bytes via /DCTDecode (no Pillow re-encode)
     parts = [b"%PDF-1.4\n"]
@@ -501,11 +621,14 @@ def main():
     parser.add_argument("--scale",   type=float, default=1.0,
                         help="Downscale factor before encoding (default 1.0). "
                              "1.0 = original size, no quality downgrade.")
+    parser.add_argument("--standardize-pages", action="store_true",
+                        help="Render all pages onto a common canvas size before PDF generation.")
     args = parser.parse_args()
 
     cfg = PUBLICATIONS[args.publication]
     edition_date = args.date or default_date_for(args.publication)
     quality = args.quality if args.quality is not None else default_quality_for(args.publication)
+    standardize_pages = args.standardize_pages or default_standardize_pages_for(args.publication)
 
     if args.publication == "prajavani":
         requested_yyyymmdd = date_ddmmyyyy_to_yyyymmdd(edition_date)
@@ -540,28 +663,28 @@ def main():
             cfg["api_base"], cfg["publisher"], edition_number, resolved_yyyymmdd
         )
         index_payload = get_prajavani_index_payload(payload)
-        image_urls = get_prajavani_image_urls(payload, index_payload=index_payload)
-        total_discovered = len(image_urls)
+        pdf_urls = get_prajavani_pdf_urls(payload, index_payload=index_payload)
+        total_discovered = len(pdf_urls)
         if args.pages:
-            image_urls = image_urls[:args.pages]
+            pdf_urls = pdf_urls[:args.pages]
             print(f"      Limiting pages due to --pages={args.pages} (from {total_discovered})")
-        if not image_urls:
-            raise RuntimeError("No page images found in Prajavani payload.")
-        print(f"      Pages discovered: {len(image_urls)}")
+        if not pdf_urls:
+            raise RuntimeError("No page PDFs found in Prajavani payload.")
+        print(f"      Pages discovered: {len(pdf_urls)}")
 
         tmp_dir = Path(args.tmp)
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"\n[3/4] Downloading {len(image_urls)} pages to {tmp_dir}/ …\n")
-        image_paths = download_images_from_urls(image_urls, tmp_dir, concurrency=4)
+        print(f"\n[3/4] Downloading {len(pdf_urls)} page PDFs to {tmp_dir}/ …\n")
+        pdf_paths = download_files_from_urls(pdf_urls, tmp_dir, suffix="pdf", concurrency=4)
 
         if args.output:
             out_pdf = Path(args.output)
         else:
             out_pdf = Path(f"prajavani_{resolved_yyyymmdd}_e{edition_number}.pdf")
 
-        print("\n[4/4] Building PDF …")
-        images_to_pdf(image_paths, out_pdf, quality=quality, scale=args.scale)
+        print("\n[4/4] Merging page PDFs …")
+        merge_pdfs(pdf_paths, out_pdf)
         return
 
     # 1. Fetch edition metadata
@@ -600,7 +723,13 @@ def main():
     else:
         out_pdf = Path(auto_output_name(args.publication, stem))
 
-    images_to_pdf(image_paths, out_pdf, quality=quality, scale=args.scale)
+    images_to_pdf(
+        image_paths,
+        out_pdf,
+        quality=quality,
+        scale=args.scale,
+        standardize_pages=standardize_pages,
+    )
 
 
 if __name__ == "__main__":

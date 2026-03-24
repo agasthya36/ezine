@@ -21,7 +21,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests aiohttp Pillow
+        run: pip install requests aiohttp Pillow pypdf
 
       - name: Compute edition date
         id: date
