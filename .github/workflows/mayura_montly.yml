@@ -34,7 +34,7 @@ jobs:
         run: |
           python mayura_download.py \
             --date "${{ steps.date.outputs.edition_date }}" \
-            --scale 1.0 \
+            --scale 0.7 \
             --output mayura_latest.pdf
 
       - name: Upload PDF to Cloudflare R2 cache
