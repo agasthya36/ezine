@@ -2,6 +2,22 @@ const HEALTH_PATH = "/health";
 const SUBSCRIBERS_PATH = "/subscribers";
 const IMPORT_SUBSCRIBERS_PATH = "/admin/import-subs";
 const RUN_MONTHLY_PATH = "/admin/run-monthly";
+const RUN_WEEKLY_SUDHA_PATH = "/admin/run-weekly-sudha";
+
+const SERIES = {
+  mayura: {
+    label: "ಮಯೂರ | Mayura",
+    cadence: "monthly",
+    expectedR2Key: (periodKey) => `pdfs/${periodKey}/mayura_${periodKey}.pdf`,
+    filename: (periodKey) => `mayura_${periodKey}.pdf`,
+  },
+  sudha: {
+    label: "ಸುಧಾ | Sudha",
+    cadence: "weekly",
+    expectedR2Key: (periodKey) => `pdfs/sudha/${periodKey}/sudha_${periodKey}.pdf`,
+    filename: (periodKey) => `sudha_${periodKey}.pdf`,
+  },
+};
 
 export default {
   async fetch(request, env, ctx) {
@@ -20,7 +36,11 @@ export default {
     }
 
     if (request.method === "POST" && url.pathname === RUN_MONTHLY_PATH) {
-      return handleManualRun(request, env, ctx);
+      return handleManualRunMayura(request, env, ctx);
+    }
+
+    if (request.method === "POST" && url.pathname === RUN_WEEKLY_SUDHA_PATH) {
+      return handleManualRunSudha(request, env, ctx);
     }
 
     if (request.method === "POST" && url.pathname === `/${env.SECRET_PATH}`) {
@@ -44,7 +64,7 @@ async function handleWebhook(request, env, ctx) {
 
   const chatId = String(msg.chat.id);
   const firstName = msg.from?.first_name || "there";
-  const text = String(msg.text || "").trim();
+  const text = String(msg.text || "").trim().toLowerCase();
 
   if (text.startsWith("/start")) {
     await addSubscriber(env, chatId, firstName);
@@ -53,21 +73,25 @@ async function handleWebhook(request, env, ctx) {
       chatId,
       [
         `Namaskara ${firstName}.`,
-        "You are now subscribed to Mayura e-zine updates.",
+        "You are now subscribed to e-zine updates.",
         "",
         "Commands:",
-        "  /latest - send cached edition",
+        "  /latest_mayura - send Mayura monthly cached edition",
+        "  /latest_sudha - send Sudha weekly cached edition",
         "  /stop - unsubscribe",
       ].join("\n"),
     );
   } else if (text.startsWith("/stop")) {
     await removeSubscriber(env, chatId);
     await tgSendMessage(env, chatId, "You have been unsubscribed. Send /start to resubscribe.");
-  } else if (text.startsWith("/latest")) {
-    ctx.waitUntil(sendLatestToChat(env, chatId));
-    await tgSendMessage(env, chatId, "Fetching cached/latest edition. You will receive it shortly.");
+  } else if (text.startsWith("/latest_mayura")) {
+    ctx.waitUntil(sendLatestToChat(env, chatId, "mayura"));
+    await tgSendMessage(env, chatId, "Fetching Mayura cached/latest edition. You will receive it shortly.");
+  } else if (text.startsWith("/latest_sudha")) {
+    ctx.waitUntil(sendLatestToChat(env, chatId, "sudha"));
+    await tgSendMessage(env, chatId, "Fetching Sudha cached/latest edition. You will receive it shortly.");
   } else {
-    await tgSendMessage(env, chatId, "Commands:\n  /start\n  /latest\n  /stop");
+    await tgSendMessage(env, chatId, "Commands:\n  /start\n  /latest_mayura\n  /latest_sudha\n  /stop");
   }
 
   return new Response("ok");
@@ -75,14 +99,18 @@ async function handleWebhook(request, env, ctx) {
 
 async function handleHealth(env) {
   const ids = await listSubscriberIds(env);
-  const monthKey = getMonthKey();
-  const meta = await getMonthMetaWithFallback(env, monthKey);
+  const mayuraPeriod = getPeriodKey("mayura");
+  const sudhaPeriod = getPeriodKey("sudha");
+  const mayuraMeta = await getMetaWithFallback(env, "mayura", mayuraPeriod);
+  const sudhaMeta = await getMetaWithFallback(env, "sudha", sudhaPeriod);
 
   return json({
     status: "ok",
     subscribers: ids.length,
-    month_key: monthKey,
-    pdf_cached: Boolean(meta?.r2_key),
+    mayura_period: mayuraPeriod,
+    mayura_pdf_cached: Boolean(mayuraMeta?.r2_key),
+    sudha_period: sudhaPeriod,
+    sudha_pdf_cached: Boolean(sudhaMeta?.r2_key),
   });
 }
 
@@ -123,13 +151,22 @@ async function handleImportSubscribers(request, env) {
   return json({ imported: ids.length });
 }
 
-async function handleManualRun(request, env, ctx) {
+async function handleManualRunMayura(request, env, ctx) {
   if (!isAdminAuthorized(request, env)) {
     return new Response("forbidden", { status: 403 });
   }
 
-  ctx.waitUntil(runMonthlyBroadcast(env));
-  return json({ status: "scheduled" });
+  ctx.waitUntil(runBroadcast(env, "mayura"));
+  return json({ status: "scheduled", series: "mayura" });
+}
+
+async function handleManualRunSudha(request, env, ctx) {
+  if (!isAdminAuthorized(request, env)) {
+    return new Response("forbidden", { status: 403 });
+  }
+
+  ctx.waitUntil(runBroadcast(env, "sudha"));
+  return json({ status: "scheduled", series: "sudha" });
 }
 
 function isAdminAuthorized(request, env) {
@@ -138,18 +175,18 @@ function isAdminAuthorized(request, env) {
   return Boolean(env.ADMIN_TOKEN) && token === env.ADMIN_TOKEN;
 }
 
-async function sendLatestToChat(env, chatId) {
+async function sendLatestToChat(env, chatId, series) {
   try {
-    const monthKey = getMonthKey();
-    const { fileId } = await ensureMonthlyPdfAndFileId(env, monthKey, chatId);
-    await tgSendDocumentByFileId(env, chatId, fileId, captionForMonth(monthKey));
+    const periodKey = getPeriodKey(series);
+    const { fileId } = await ensurePdfAndFileId(env, series, periodKey, chatId);
+    await tgSendDocumentByFileId(env, chatId, fileId, caption(series, periodKey));
   } catch (err) {
-    await tgSendMessage(env, chatId, `Failed to send latest edition: ${String(err)}`);
+    await tgSendMessage(env, chatId, `Failed to send ${series} edition: ${String(err)}`);
   }
 }
 
-async function runMonthlyBroadcast(env) {
-  const monthKey = getMonthKey();
+async function runBroadcast(env, series) {
+  const periodKey = getPeriodKey(series);
   const subscribers = await listSubscriberIds(env);
 
   if (!subscribers.length) {
@@ -157,23 +194,23 @@ async function runMonthlyBroadcast(env) {
   }
 
   const seedChatId = subscribers[0];
-  const { fileId } = await ensureMonthlyPdfAndFileId(env, monthKey, seedChatId);
-  const caption = captionForMonth(monthKey);
+  const { fileId } = await ensurePdfAndFileId(env, series, periodKey, seedChatId);
+  const fileCaption = caption(series, periodKey);
 
   for (const chatId of subscribers) {
     try {
-      await tgSendDocumentByFileId(env, chatId, fileId, caption);
+      await tgSendDocumentByFileId(env, chatId, fileId, fileCaption);
     } catch (err) {
       console.error(`send failed for ${chatId}`, err);
     }
   }
 }
 
-async function ensureMonthlyPdfAndFileId(env, monthKey, seedChatId) {
-  let meta = await getMonthMetaWithFallback(env, monthKey);
+async function ensurePdfAndFileId(env, series, periodKey, seedChatId) {
+  let meta = await getMetaWithFallback(env, series, periodKey);
   if (!meta?.r2_key) {
     throw new Error(
-      `No cached PDF found for ${monthKey}. Upload to R2 key: ${expectedR2Key(monthKey)}`,
+      `No cached PDF found for ${series} ${periodKey}. Upload to R2 key: ${expectedR2Key(series, periodKey)}`,
     );
   }
 
@@ -184,17 +221,31 @@ async function ensureMonthlyPdfAndFileId(env, monthKey, seedChatId) {
     }
 
     const bytes = await obj.arrayBuffer();
-    const uploaded = await tgUploadDocument(env, seedChatId, bytes, `mayura_${monthKey}.pdf`, captionForMonth(monthKey));
+    const uploaded = await tgUploadDocument(
+      env,
+      seedChatId,
+      bytes,
+      SERIES[series].filename(periodKey),
+      caption(series, periodKey),
+    );
     const fileId = uploaded?.result?.document?.file_id;
     if (!fileId) {
       throw new Error(`Telegram upload did not return file_id: ${JSON.stringify(uploaded)}`);
     }
 
     meta.telegram_file_id = fileId;
-    await saveMonthMeta(env, monthKey, meta);
+    await saveMeta(env, series, periodKey, meta);
   }
 
   return { meta, fileId: meta.telegram_file_id };
+}
+
+function getPeriodKey(series) {
+  if (SERIES[series].cadence === "monthly") {
+    return getMonthKey();
+  }
+
+  return getIsoWeekKeyInKolkata();
 }
 
 function getMonthKey() {
@@ -209,8 +260,34 @@ function getMonthKey() {
   return `${year}-${month}`;
 }
 
-function captionForMonth(monthKey) {
-  return `ಮಯೂರ | Mayura — ${monthKey} Edition`;
+function getIsoWeekKeyInKolkata() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const year = Number(parts.find((p) => p.type === "year")?.value);
+  const month = Number(parts.find((p) => p.type === "month")?.value);
+  const day = Number(parts.find((p) => p.type === "day")?.value);
+
+  // Convert Kolkata local date into UTC-based date arithmetic for ISO week calc.
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const weekday = (date.getUTCDay() + 6) % 7; // Monday=0
+  date.setUTCDate(date.getUTCDate() - weekday + 3); // Thursday of current week
+
+  const isoYear = date.getUTCFullYear();
+  const firstThursday = new Date(Date.UTC(isoYear, 0, 4));
+  const firstWeekday = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstWeekday + 3);
+
+  const weekNumber = 1 + Math.round((date - firstThursday) / (7 * 24 * 60 * 60 * 1000));
+  return `${isoYear}-W${String(weekNumber).padStart(2, "0")}`;
+}
+
+function caption(series, periodKey) {
+  return `${SERIES[series].label} — ${periodKey} Edition`;
 }
 
 async function tgSendMessage(env, chatId, text) {
@@ -227,7 +304,7 @@ async function tgSendMessage(env, chatId, text) {
   }
 }
 
-async function tgSendDocumentByFileId(env, chatId, fileId, caption) {
+async function tgSendDocumentByFileId(env, chatId, fileId, fileCaption) {
   const endpoint = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendDocument`;
   const resp = await fetch(endpoint, {
     method: "POST",
@@ -235,7 +312,7 @@ async function tgSendDocumentByFileId(env, chatId, fileId, caption) {
     body: JSON.stringify({
       chat_id: chatId,
       document: fileId,
-      caption,
+      caption: fileCaption,
     }),
   });
 
@@ -252,11 +329,11 @@ async function tgSendDocumentByFileId(env, chatId, fileId, caption) {
   return result;
 }
 
-async function tgUploadDocument(env, chatId, bytes, filename, caption) {
+async function tgUploadDocument(env, chatId, bytes, filename, fileCaption) {
   const endpoint = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendDocument`;
   const form = new FormData();
   form.set("chat_id", chatId);
-  form.set("caption", caption);
+  form.set("caption", fileCaption);
   form.set("document", new Blob([bytes], { type: "application/pdf" }), filename);
 
   const resp = await fetch(endpoint, {
@@ -299,7 +376,6 @@ async function listSubscriberIds(env) {
       if (key.name.startsWith("sub:")) {
         out.push(key.name.slice(4));
       } else if (/^-?\d+$/.test(key.name)) {
-        // Backward-compatible: include legacy chat-id keys without prefix.
         out.push(key.name);
       }
     }
@@ -313,26 +389,26 @@ function subscriberKey(chatId) {
   return `sub:${chatId}`;
 }
 
-function monthMetaKey(monthKey) {
-  return `meta:${monthKey}`;
+function metaKey(series, periodKey) {
+  return `meta:${series}:${periodKey}`;
 }
 
-function expectedR2Key(monthKey) {
-  return `pdfs/${monthKey}/mayura_${monthKey}.pdf`;
+function expectedR2Key(series, periodKey) {
+  return SERIES[series].expectedR2Key(periodKey);
 }
 
-async function getMonthMeta(env, monthKey) {
-  const raw = await env.SUBSCRIBERS.get(monthMetaKey(monthKey));
+async function getMeta(env, series, periodKey) {
+  const raw = await env.SUBSCRIBERS.get(metaKey(series, periodKey));
   return raw ? JSON.parse(raw) : null;
 }
 
-async function getMonthMetaWithFallback(env, monthKey) {
-  const existing = await getMonthMeta(env, monthKey);
+async function getMetaWithFallback(env, series, periodKey) {
+  const existing = await getMeta(env, series, periodKey);
   if (existing?.r2_key) {
     return existing;
   }
 
-  const r2Key = expectedR2Key(monthKey);
+  const r2Key = expectedR2Key(series, periodKey);
   const head = await env.PDF_CACHE.head(r2Key);
   if (!head) {
     return existing || null;
@@ -340,16 +416,17 @@ async function getMonthMetaWithFallback(env, monthKey) {
 
   const next = {
     ...(existing || {}),
-    month_key: monthKey,
+    series,
+    period_key: periodKey,
     r2_key: r2Key,
     discovered_at: new Date().toISOString(),
   };
-  await saveMonthMeta(env, monthKey, next);
+  await saveMeta(env, series, periodKey, next);
   return next;
 }
 
-async function saveMonthMeta(env, monthKey, meta) {
-  await env.SUBSCRIBERS.put(monthMetaKey(monthKey), JSON.stringify(meta));
+async function saveMeta(env, series, periodKey, meta) {
+  await env.SUBSCRIBERS.put(metaKey(series, periodKey), JSON.stringify(meta));
 }
 
 function json(payload, status = 200) {

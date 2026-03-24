@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
 """
-Mayura E-Zine Downloader
-========================
-Downloads all pages of a Mayura edition and compiles them into a single PDF.
+E-Zine Downloader
+=================
+Downloads all pages of a supported e-zine edition and compiles them into a single PDF.
 
 Usage:
-    python mayura_download.py                        # downloads latest edition
-    python mayura_download.py --date 01/03/2026      # specific edition date
-    python mayura_download.py --date 01/03/2026 --pages 24 --output mayura_mar26.pdf
+    python mayura_download.py --publication mayura
+    python mayura_download.py --publication sudha --date 26/03/2026
+    python mayura_download.py --publication sudha --date 26/03/2026 --pages 64 --output sudha_w13.pdf
 
 Dependencies:
     pip install requests aiohttp Pillow
 """
 
 import argparse
-import sys
-import time
 from pathlib import Path
+from datetime import datetime
 
 import asyncio
 import aiohttp
@@ -25,18 +24,31 @@ from PIL import Image
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
-API_URL   = "http://mayuraezine.com/api/Login/GetAllEditions"
-BASE_URL  = "http://mayuraezine.com"
 HEADERS   = {"User-Agent": "Mozilla/5.0 (compatible; MayuraDownloader/1.0)"}
 DELAY_SEC = 0.3   # polite delay between image requests
+
+PUBLICATIONS = {
+    "mayura": {
+        "api_url": "http://mayuraezine.com/api/Login/GetAllEditions",
+        "base_url": "http://mayuraezine.com",
+        "output_prefix": "mayura",
+        "default_date_mode": "month_start",
+    },
+    "sudha": {
+        "api_url": "http://sudhaezine.com/api/Login/GetAllEditions",
+        "base_url": "http://sudhaezine.com",
+        "output_prefix": "sudha",
+        "default_date_mode": "today",
+    },
+}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def get_latest_edition(date: str = "01/03/2026") -> dict:
+def get_latest_edition(api_url: str, date: str) -> dict:
     """Fetch edition list and return the freshest (or matching) entry."""
     params = {"date": date}
-    resp = requests.get(API_URL, params=params, headers=HEADERS, timeout=15)
+    resp = requests.get(api_url, params=params, headers=HEADERS, timeout=15)
     resp.raise_for_status()
     editions = resp.json()
     if not editions:
@@ -46,7 +58,7 @@ def get_latest_edition(date: str = "01/03/2026") -> dict:
     return fresh
 
 
-def parse_url_template(full_page_url: str) -> tuple[str, str]:
+def parse_url_template(full_page_url: str, base_url: str) -> tuple[str, str]:
     """
     Extract the base URL prefix and the filename stem from FullPageUrl.
 
@@ -62,7 +74,7 @@ def parse_url_template(full_page_url: str) -> tuple[str, str]:
     url = full_page_url.replace("\\", "/")
     # Make sure scheme is present
     if not url.startswith("http"):
-        url = BASE_URL + "/" + url.lstrip("/")
+        url = base_url + "/" + url.lstrip("/")
 
     # Split into directory + filename
     dir_part  = url.rsplit("/", 1)[0] + "/"
@@ -80,6 +92,19 @@ def parse_url_template(full_page_url: str) -> tuple[str, str]:
 
 def build_page_url(dir_prefix: str, stem: str, suffix: str, page: int) -> str:
     return f"{dir_prefix}{stem}_{page}_{suffix}"
+
+
+def default_date_for(publication: str) -> str:
+    cfg = PUBLICATIONS[publication]
+    now = datetime.now()
+    if cfg["default_date_mode"] == "month_start":
+        return now.strftime("01/%m/%Y")
+    return now.strftime("%d/%m/%Y")
+
+
+def auto_output_name(publication: str, stem: str) -> str:
+    prefix = PUBLICATIONS[publication]["output_prefix"]
+    return f"{prefix}_{stem}.pdf"
 
 
 def probe_page_count(dir_prefix: str, stem: str, suffix: str,
@@ -263,9 +288,15 @@ def images_to_pdf(image_paths: list[Path], output_pdf: Path,
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Download Mayura e-zine edition to PDF")
-    parser.add_argument("--date",    default="01/03/2026",
-                        help="Edition date in DD/MM/YYYY format (default: 01/03/2026)")
+    parser = argparse.ArgumentParser(description="Download supported e-zine edition to PDF")
+    parser.add_argument(
+        "--publication",
+        choices=sorted(PUBLICATIONS.keys()),
+        default="mayura",
+        help="Publication to download (default: mayura)",
+    )
+    parser.add_argument("--date", default=None,
+                        help="Edition date in DD/MM/YYYY format (default depends on publication)")
     parser.add_argument("--pages",   type=int, default=None,
                         help="Override page count (skip auto-detection)")
     parser.add_argument("--output",  default=None,
@@ -280,9 +311,12 @@ def main():
                              "1.0 = original size, no quality downgrade.")
     args = parser.parse_args()
 
+    cfg = PUBLICATIONS[args.publication]
+    edition_date = args.date or default_date_for(args.publication)
+
     # 1. Fetch edition metadata
-    print(f"\n[1/4] Fetching edition list for date={args.date} …")
-    edition = get_latest_edition(args.date)
+    print(f"\n[1/4] Fetching {args.publication} edition list for date={edition_date} …")
+    edition = get_latest_edition(cfg["api_url"], edition_date)
     print(f"      Edition: {edition.get('FileName', '?')}  |  "
           f"Fresh={edition.get('Fresh')}")
 
@@ -290,7 +324,7 @@ def main():
     print(f"      FullPageUrl: {full_page_url}")
 
     # 2. Parse URL template
-    dir_prefix, stem, suffix = parse_url_template(full_page_url)
+    dir_prefix, stem, suffix = parse_url_template(full_page_url, cfg["base_url"])
     print(f"\n[2/4] URL template:\n"
           f"      Dir   : {dir_prefix}\n"
           f"      Stem  : {stem}\n"
@@ -311,7 +345,7 @@ def main():
     if args.output:
         out_pdf = Path(args.output)
     else:
-        out_pdf = Path(f"mayura_{stem.replace('my', '', 1)}.pdf")
+        out_pdf = Path(auto_output_name(args.publication, stem))
 
     images_to_pdf(image_paths, out_pdf, quality=args.quality, scale=args.scale)
 

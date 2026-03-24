@@ -1,10 +1,10 @@
-name: Mayura Monthly Upload + Broadcast
+name: Sudha Weekly Upload + Broadcast
 
 on:
   schedule:
-    # 2nd of every month at 6:00 AM UTC (11:30 AM IST)
-    - cron: "0 6 2 * *"
-  workflow_dispatch:   # manual trigger from GitHub UI
+    # Every Thursday at 6:00 AM UTC (11:30 AM IST)
+    - cron: "0 6 * * 4"
+  workflow_dispatch:
 
 jobs:
   download-upload-and-broadcast:
@@ -23,20 +23,19 @@ jobs:
       - name: Install dependencies
         run: pip install requests aiohttp Pillow
 
-      - name: Compute edition date (1st of current month)
+      - name: Compute edition date + week key
         id: date
         run: |
-          echo "edition_date=$(date +'01/%m/%Y')" >> $GITHUB_OUTPUT
-          echo "month_label=$(date +'%B %Y')"     >> $GITHUB_OUTPUT
-          echo "month_key=$(date +'%Y-%m')"       >> $GITHUB_OUTPUT
+          echo "edition_date=$(date +'%d/%m/%Y')" >> $GITHUB_OUTPUT
+          echo "week_key=$(date +'%G-W%V')"       >> $GITHUB_OUTPUT
 
-      - name: Download Mayura edition
+      - name: Download Sudha edition
         run: |
           python mayura_download.py \
-            --publication mayura \
+            --publication sudha \
             --date "${{ steps.date.outputs.edition_date }}" \
             --scale 0.7 \
-            --output mayura_latest.pdf
+            --output sudha_latest.pdf
 
       - name: Upload PDF to Cloudflare R2 cache
         env:
@@ -44,17 +43,17 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           npx -y wrangler r2 object put \
-            "mayura-pdf-cache/pdfs/${{ steps.date.outputs.month_key }}/mayura_${{ steps.date.outputs.month_key }}.pdf" \
-            --file mayura_latest.pdf \
+            "mayura-pdf-cache/pdfs/sudha/${{ steps.date.outputs.week_key }}/sudha_${{ steps.date.outputs.week_key }}.pdf" \
+            --file sudha_latest.pdf \
             --remote
 
-      - name: Trigger Worker broadcast from cache
+      - name: Trigger Worker weekly Sudha broadcast from cache
         env:
           WORKER_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
           WORKER_ADMIN_TOKEN: ${{ secrets.WORKER_ADMIN_TOKEN }}
         run: |
           BASE="${WORKER_BASE_URL%/}"
-          URL="${BASE}/admin/run-monthly"
+          URL="${BASE}/admin/run-weekly-sudha"
           RESP="$(curl -sS -w '\n%{http_code}' -X POST "$URL" -H "x-admin-token: ${WORKER_ADMIN_TOKEN}")"
           BODY="$(echo "$RESP" | sed '$d')"
           CODE="$(echo "$RESP" | tail -n1)"
