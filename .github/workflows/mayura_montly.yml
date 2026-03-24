@@ -1,0 +1,46 @@
+name: Mayura Monthly Download
+
+on:
+  schedule:
+    # Runs on the 2nd of every month at 6:00 AM UTC (11:30 AM IST)
+    # The 1st-of-month edition is usually live by then
+    - cron: "0 6 2 * *"
+  workflow_dispatch:   # allows manual trigger from GitHub UI
+
+jobs:
+  download-and-email:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests Pillow
+
+      - name: Compute edition date (1st of current month)
+        id: date
+        run: |
+          # Format: DD/MM/YYYY — always the 1st
+          echo "edition_date=$(date +'01/%m/%Y')" >> $GITHUB_OUTPUT
+          echo "month_label=$(date +'%B %Y')"     >> $GITHUB_OUTPUT
+
+      - name: Download Mayura edition
+        run: |
+          python mayura_download.py \
+            --date "${{ steps.date.outputs.edition_date }}" \
+            --output mayura_latest.pdf
+
+      - name: Send PDF via email
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          MONTH_LABEL: ${{ steps.date.outputs.month_label }}
+        run: python send_email.py
