@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: mayura-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false        # set manually in Render dashboard
+      - key: SECRET_PATH
+        sync: false
+      - key: PDF_SCALE
+        value: "1.0"
