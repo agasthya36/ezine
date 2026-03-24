@@ -38,9 +38,9 @@ from mayura_download import (
 # ── Config ───────────────────────────────────────────────────────────────────
 BOT_TOKEN   = os.environ["TELEGRAM_BOT_TOKEN"]
 SECRET_PATH = os.environ.get("SECRET_PATH", "mayura-webhook")
-SCALE       = float(os.environ.get("PDF_SCALE", "1.0"))
-QUALITY     = int(os.environ.get("PDF_QUALITY", "75"))
-SUBS_FILE   = Path("subscribers.json")   # persists chat IDs
+SCALE       = float(os.environ.get("PDF_SCALE", "1.0"))  # no downscale by default
+QUALITY     = int(os.environ.get("PDF_QUALITY", "95"))   # high quality JPEGS
+SUBS_FILE   = Path("subscribers.json")   # persists chat IDs across restarts
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)

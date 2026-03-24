@@ -272,12 +272,12 @@ def main():
                         help="Output PDF filename (auto-named if omitted)")
     parser.add_argument("--tmp",     default="./mayura_tmp",
                         help="Temp directory for downloaded images")
-    parser.add_argument("--quality", type=int, default=75,
-                        help="JPEG quality after scaling (default 75). "
-                             "Below 60 rarely helps due to JPEG re-encoding floor.")
-    parser.add_argument("--scale",   type=float, default=0.7,
-                        help="Downscale factor before encoding (default 0.7). "
-                             "0.7 = ~12-15 MB, 0.5 = ~6-8 MB, 1.0 = original size.")
+    parser.add_argument("--quality", type=int, default=95,
+                        help="JPEG quality after scaling (default 95). "
+                             "Use 100 for maximum quality (may increase file size).")
+    parser.add_argument("--scale",   type=float, default=1.0,
+                        help="Downscale factor before encoding (default 1.0). "
+                             "1.0 = original size, no quality downgrade.")
     args = parser.parse_args()
 
     # 1. Fetch edition metadata
