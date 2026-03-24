@@ -15,7 +15,7 @@ Dependencies:
 
 import argparse
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import asyncio
 import aiohttp
@@ -45,17 +45,28 @@ PUBLICATIONS = {
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def get_latest_edition(api_url: str, date: str) -> dict:
-    """Fetch edition list and return the freshest (or matching) entry."""
-    params = {"date": date}
-    resp = requests.get(api_url, params=params, headers=HEADERS, timeout=15)
-    resp.raise_for_status()
-    editions = resp.json()
-    if not editions:
-        raise RuntimeError("API returned no editions.")
-    # Fresh==1 is the current edition; fallback to first entry
-    fresh = next((e for e in editions if e.get("Fresh") == 1), editions[0])
-    return fresh
+def get_latest_edition(api_url: str, date: str, fallback_days: int = 0) -> dict:
+    """Fetch edition list and return the freshest (or nearest-previous) entry."""
+    base_date = datetime.strptime(date, "%d/%m/%Y")
+
+    for delta in range(0, fallback_days + 1):
+        probe_date = (base_date - timedelta(days=delta)).strftime("%d/%m/%Y")
+        params = {"date": probe_date}
+        resp = requests.get(api_url, params=params, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        editions = resp.json()
+        if not editions:
+            continue
+
+        # Fresh==1 is the current edition; fallback to first entry
+        fresh = next((e for e in editions if e.get("Fresh") == 1), editions[0])
+        if delta > 0:
+            print(f"      No edition on requested date. Using previous available date: {probe_date}")
+        return fresh
+
+    raise RuntimeError(
+        f"API returned no editions for {date} or previous {fallback_days} day(s)."
+    )
 
 
 def parse_url_template(full_page_url: str, base_url: str) -> tuple[str, str]:
@@ -316,7 +327,8 @@ def main():
 
     # 1. Fetch edition metadata
     print(f"\n[1/4] Fetching {args.publication} edition list for date={edition_date} …")
-    edition = get_latest_edition(cfg["api_url"], edition_date)
+    fallback_days = 7 if args.publication == "sudha" else 35
+    edition = get_latest_edition(cfg["api_url"], edition_date, fallback_days=fallback_days)
     print(f"      Edition: {edition.get('FileName', '?')}  |  "
           f"Fresh={edition.get('Fresh')}")
 
