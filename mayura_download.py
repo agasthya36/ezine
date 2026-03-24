@@ -15,7 +15,7 @@ Dependencies:
 
 import argparse
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import asyncio
 import aiohttp
@@ -45,28 +45,43 @@ PUBLICATIONS = {
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def get_latest_edition(api_url: str, date: str, fallback_days: int = 0) -> dict:
-    """Fetch edition list and return the freshest (or nearest-previous) entry."""
-    base_date = datetime.strptime(date, "%d/%m/%Y")
+def get_latest_edition(api_url: str, date: str) -> dict:
+    """Fetch edition list for a date and return the freshest entry."""
+    params = {"date": date}
+    resp = requests.get(api_url, params=params, headers=HEADERS, timeout=15)
+    resp.raise_for_status()
+    editions = resp.json()
+    if not editions:
+        raise RuntimeError(f"API returned no editions for {date}.")
+    return next((e for e in editions if e.get("Fresh") == 1), editions[0])
 
-    for delta in range(0, fallback_days + 1):
-        probe_date = (base_date - timedelta(days=delta)).strftime("%d/%m/%Y")
-        params = {"date": probe_date}
-        resp = requests.get(api_url, params=params, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        editions = resp.json()
-        if not editions:
-            continue
 
-        # Fresh==1 is the current edition; fallback to first entry
-        fresh = next((e for e in editions if e.get("Fresh") == 1), editions[0])
-        if delta > 0:
-            print(f"      No edition on requested date. Using previous available date: {probe_date}")
-        return fresh
+def get_default_date(base_url: str) -> str:
+    """Mirror website behavior: fetch server-provided fallback edition date."""
+    url = f"{base_url.rstrip('/')}/api/Login/GetDefaultDate"
+    resp = requests.get(url, headers=HEADERS, timeout=15)
+    resp.raise_for_status()
+    value = resp.json()
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeError(f"Unexpected default date response: {value!r}")
+    return value.strip()
 
-    raise RuntimeError(
-        f"API returned no editions for {date} or previous {fallback_days} day(s)."
-    )
+
+def get_latest_edition_via_site_flow(api_url: str, base_url: str, requested_date: str) -> tuple[dict, str]:
+    """
+    Website-equivalent flow:
+    1) GetAllEditions(requested_date)
+    2) if empty -> GetDefaultDate() then GetAllEditions(default_date)
+    """
+    try:
+        return get_latest_edition(api_url, requested_date), requested_date
+    except RuntimeError:
+        default_date = get_default_date(base_url)
+        if default_date == requested_date:
+            raise
+        edition = get_latest_edition(api_url, default_date)
+        print(f"      Requested date had no editions. Using site default date: {default_date}")
+        return edition, default_date
 
 
 def parse_url_template(full_page_url: str, base_url: str) -> tuple[str, str]:
@@ -327,8 +342,10 @@ def main():
 
     # 1. Fetch edition metadata
     print(f"\n[1/4] Fetching {args.publication} edition list for date={edition_date} …")
-    fallback_days = 7 if args.publication == "sudha" else 35
-    edition = get_latest_edition(cfg["api_url"], edition_date, fallback_days=fallback_days)
+    edition, resolved_date = get_latest_edition_via_site_flow(
+        cfg["api_url"], cfg["base_url"], edition_date
+    )
+    print(f"      Effective date used: {resolved_date}")
     print(f"      Edition: {edition.get('FileName', '?')}  |  "
           f"Fresh={edition.get('Fresh')}")
 
