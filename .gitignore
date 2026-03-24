@@ -8,13 +8,15 @@ npm-debug.log*
 
 # Wrangler/Cloudflare local files
 .wrangler/
-wrangler.toml
 *.dev.vars
 .dev.vars
 
 # Env files
 .env
 .env.*
+
+# Runtime data (may contain user chat IDs)
+subscribers.json
 
 # Local artifacts
 *.pdf
