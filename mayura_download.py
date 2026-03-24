@@ -138,16 +138,33 @@ def download_images(dir_prefix: str, stem: str, suffix: str,
     return paths
 
 
-def images_to_pdf(image_paths: list[Path], output_pdf: Path) -> None:
-    """Merge all downloaded images into a single PDF."""
+def images_to_pdf(image_paths: list[Path], output_pdf: Path,
+                  quality: int = 75) -> None:
+    """
+    Merge all downloaded images into a single PDF.
+
+    quality: JPEG re-encoding quality (1-95).
+             85  → near-lossless,  ~same size as original
+             75  → good quality,   ~50-60% of original size  (default)
+             60  → acceptable,     ~35-40% of original size
+             40  → readable but visibly lossy
+    """
+    import io
     if not image_paths:
         raise RuntimeError("No images to merge.")
 
-    print(f"\nBuilding PDF from {len(image_paths)} pages …")
+    print(f"\nBuilding PDF (JPEG quality={quality}) from {len(image_paths)} pages …")
     pil_images = []
     for p in image_paths:
         try:
             img = Image.open(p).convert("RGB")
+            if quality < 85:
+                # Re-encode in memory at target quality to reduce size
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=quality, optimize=True)
+                buf.seek(0)
+                img = Image.open(buf).convert("RGB")
+                img.load()   # force decode before buf goes out of scope
             pil_images.append(img)
         except Exception as e:
             print(f"  ✗ skipping {p.name}: {e}")
@@ -157,7 +174,10 @@ def images_to_pdf(image_paths: list[Path], output_pdf: Path) -> None:
 
     first, rest = pil_images[0], pil_images[1:]
     first.save(output_pdf, save_all=True, append_images=rest)
-    print(f"✅  PDF saved → {output_pdf}  ({output_pdf.stat().st_size / 1_048_576:.1f} MB)")
+    size_mb = output_pdf.stat().st_size / 1_048_576
+    print(f"✅  PDF saved → {output_pdf}  ({size_mb:.1f} MB)")
+    if size_mb > 24:
+        print("⚠️   Still over 24 MB — try a lower --quality value (e.g. 60).")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -170,8 +190,11 @@ def main():
                         help="Override page count (skip auto-detection)")
     parser.add_argument("--output", default=None,
                         help="Output PDF filename (auto-named if omitted)")
-    parser.add_argument("--tmp",    default="./mayura_tmp",
+    parser.add_argument("--tmp",     default="./mayura_tmp",
                         help="Temp directory for downloaded images")
+    parser.add_argument("--quality", type=int, default=75,
+                        help="JPEG re-encoding quality 1-95 (default 75 ≈ half the size). "
+                             "Use 85 for near-lossless, 60 for smallest file.")
     args = parser.parse_args()
 
     # 1. Fetch edition metadata
@@ -209,7 +232,7 @@ def main():
         # Auto-name from stem: my03MAR01-164 → mayura_03MAR01-164.pdf
         out_pdf = Path(f"mayura_{stem.replace('my', '', 1)}.pdf")
 
-    images_to_pdf(image_paths, out_pdf)
+    images_to_pdf(image_paths, out_pdf, quality=args.quality)
 
 
 if __name__ == "__main__":

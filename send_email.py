@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Sends mayura_latest.pdf as an email attachment via Gmail SMTP.
+Sends mayura_latest.pdf as a Gmail attachment.
 Reads credentials from environment variables (set as GitHub Secrets).
 """
 
@@ -23,24 +23,18 @@ if not PDF_PATH.exists():
     sys.exit(1)
 
 size_mb = PDF_PATH.stat().st_size / 1_048_576
-print(f"Attaching {PDF_PATH} ({size_mb:.1f} MB) …")
+print(f"Attaching {PDF_PATH} ({size_mb:.1f} MB) ...")
 
 if size_mb > 24:
-    print("WARNING: PDF exceeds ~24 MB — Gmail may reject it.")
+    print("ERROR: PDF still exceeds 24 MB after compression. Lower --quality further.")
+    sys.exit(1)
 
-# Build email
 msg = MIMEMultipart()
 msg["From"]    = GMAIL_USER
 msg["To"]      = TO_EMAIL
-msg["Subject"] = f"ಮಯೂರ | Mayura — {MONTH} Edition"
+msg["Subject"] = f"Mayura | {MONTH} Edition"
 
-body = f"""\
-ನಮಸ್ಕಾರ,
-
-Please find attached the Mayura e-zine for {MONTH}.
-
-— Automated by GitHub Actions
-"""
+body = f"Namaskara,\n\nPlease find attached the Mayura e-zine for {MONTH}.\n\n— Automated by GitHub Actions"
 msg.attach(MIMEText(body, "plain", "utf-8"))
 
 with open(PDF_PATH, "rb") as f:
@@ -48,10 +42,9 @@ with open(PDF_PATH, "rb") as f:
 part["Content-Disposition"] = f'attachment; filename="{PDF_PATH.name}"'
 msg.attach(part)
 
-# Send via Gmail SMTP
-print(f"Sending to {TO_EMAIL} via {GMAIL_USER} …")
+print(f"Sending to {TO_EMAIL} ...")
 with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
     server.login(GMAIL_USER, APP_PASS)
     server.sendmail(GMAIL_USER, TO_EMAIL, msg.as_string())
 
-print("✅ Email sent successfully.")
+print("Email sent successfully.")
