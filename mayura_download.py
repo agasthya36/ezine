@@ -40,6 +40,13 @@ PUBLICATIONS = {
         "output_prefix": "sudha",
         "default_date_mode": "today",
     },
+    "prajavani": {
+        "api_base": "https://api-epaper-prod.deccanherald.com",
+        "publisher": "PV",
+        "output_prefix": "prajavani",
+        "default_date_mode": "today",
+        "default_edition": 4,
+    },
 }
 
 
@@ -133,6 +140,122 @@ def auto_output_name(publication: str, stem: str) -> str:
     return f"{prefix}_{stem}.pdf"
 
 
+def default_quality_for(publication: str) -> int:
+    if publication == "prajavani":
+        return 70
+    return 95
+
+
+def date_ddmmyyyy_to_yyyymmdd(date_str: str) -> str:
+    return datetime.strptime(date_str, "%d/%m/%Y").strftime("%Y%m%d")
+
+
+def get_prajavani_editions(api_base: str, publisher: str) -> list[dict]:
+    url = f"{api_base.rstrip('/')}/epaper/editions"
+    resp = requests.get(url, params={"publisher": publisher}, headers=HEADERS, timeout=20)
+    resp.raise_for_status()
+    groups = resp.json()
+    if not isinstance(groups, list):
+        raise RuntimeError(f"Unexpected editions response shape: {type(groups).__name__}")
+
+    editions: list[dict] = []
+    for group in groups:
+        editions.extend(group.get("editions", []))
+    return editions
+
+
+def get_prajavani_available_dates(
+    api_base: str, publisher: str, edition: int, month: int, year: int
+) -> list[str]:
+    url = f"{api_base.rstrip('/')}/epaper/available-dates"
+    params = {
+        "month": str(month),
+        "year": str(year),
+        "publisher": publisher,
+        "edition": str(edition),
+    }
+    resp = requests.get(url, params=params, headers=HEADERS, timeout=20)
+    resp.raise_for_status()
+    payload = resp.json()
+    dates = payload.get("dates", [])
+    return [
+        str(item.get("date"))
+        for item in dates
+        if item.get("hasData") is True and item.get("date")
+    ]
+
+
+def get_prajavani_latest_available_date(
+    api_base: str,
+    publisher: str,
+    edition: int,
+    requested_yyyymmdd: str,
+    lookback_months: int = 12,
+) -> str:
+    target = datetime.strptime(requested_yyyymmdd, "%Y%m%d")
+    probe = datetime(target.year, target.month, 1)
+    candidates: list[str] = []
+
+    for _ in range(lookback_months + 1):
+        month_dates = get_prajavani_available_dates(
+            api_base, publisher, edition, probe.month, probe.year
+        )
+        candidates.extend([d for d in month_dates if d <= requested_yyyymmdd])
+
+        if candidates:
+            return max(candidates)
+
+        # previous month
+        if probe.month == 1:
+            probe = datetime(probe.year - 1, 12, 1)
+        else:
+            probe = datetime(probe.year, probe.month - 1, 1)
+
+    raise RuntimeError(
+        f"No Prajavani dates found for edition={edition} on/before {requested_yyyymmdd}."
+    )
+
+
+def get_prajavani_data(api_base: str, publisher: str, edition: int, yyyymmdd: str) -> dict:
+    url = f"{api_base.rstrip('/')}/epaper/data"
+    params = {
+        "date": yyyymmdd,
+        "edition": str(edition),
+        "publisher": publisher,
+    }
+    resp = requests.get(url, params=params, headers=HEADERS, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_prajavani_index_payload(data_payload: dict) -> dict:
+    html_url_suffix = data_payload.get("html_url_suffix")
+    if not html_url_suffix:
+        raise RuntimeError("Prajavani payload does not include html_url_suffix.")
+
+    url = f"{html_url_suffix.rstrip('/')}/index.json"
+    resp = requests.get(url, headers=HEADERS, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_prajavani_image_urls(data_payload: dict, index_payload: dict | None = None) -> list[str]:
+    data_url_suffix = data_payload.get("data_url_suffix")
+    data = (index_payload or data_payload).get("data", index_payload or data_payload)
+    sections = data.get("sections", [])
+
+    if not data_url_suffix or not sections:
+        raise RuntimeError("Unexpected Prajavani data payload shape.")
+
+    image_urls = []
+    for section in sections:
+        for page in section.get("pages", []):
+            img_file = page.get("imgFile")
+            if img_file:
+                image_urls.append(f"{data_url_suffix}{img_file}")
+    return image_urls
+
+
 def probe_page_count(dir_prefix: str, stem: str, suffix: str,
                      max_pages: int = 200) -> int:
     """
@@ -170,15 +293,21 @@ async def download_page(session: "aiohttp.ClientSession", url: str,
         print(f"  [cache] page {page:3d}/{total}")
         return dest
     async with semaphore:
-        try:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
-                r.raise_for_status()
-                dest.write_bytes(await r.read())
-                print(f"  ↓ page {page:3d}/{total}  {url}")
-                return dest
-        except Exception as e:
-            print(f"  ✗ page {page:3d} failed: {e}")
-            return None
+        last_err = None
+        for attempt in range(1, 4):
+            try:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=45)) as r:
+                    r.raise_for_status()
+                    dest.write_bytes(await r.read())
+                    print(f"  ↓ page {page:3d}/{total}  {url}")
+                    return dest
+            except Exception as e:
+                last_err = e
+                if attempt < 3:
+                    await asyncio.sleep(0.5 * attempt)
+                    continue
+        print(f"  ✗ page {page:3d} failed after retries: {last_err}")
+        return None
 
 
 async def download_images_async(dir_prefix: str, stem: str, suffix: str,
@@ -200,14 +329,49 @@ async def download_images_async(dir_prefix: str, stem: str, suffix: str,
         ]
         results = await asyncio.gather(*tasks)
 
-    # Filter out failures, preserve order
-    return [p for p in results if p is not None]
+    image_paths = [p for p in results if p is not None]
+    failed = total_pages - len(image_paths)
+    if failed:
+        raise RuntimeError(f"{failed} page(s) failed to download out of {total_pages}.")
+    return image_paths
+
+
+async def download_images_from_urls_async(
+    image_urls: list[str], tmp_dir: Path, concurrency: int = 4
+) -> list[Path]:
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; MayuraDownloader/1.0)"}
+    semaphore = asyncio.Semaphore(concurrency)
+    total_pages = len(image_urls)
+
+    async with aiohttp.ClientSession(headers=headers) as session:
+        tasks = [
+            download_page(
+                session,
+                url,
+                tmp_dir / f"page_{idx:04d}.img",
+                idx,
+                total_pages,
+                semaphore,
+            )
+            for idx, url in enumerate(image_urls, start=1)
+        ]
+        results = await asyncio.gather(*tasks)
+
+    image_paths = [p for p in results if p is not None]
+    failed = total_pages - len(image_paths)
+    if failed:
+        raise RuntimeError(f"{failed} page(s) failed to download out of {total_pages}.")
+    return image_paths
 
 
 def download_images(dir_prefix: str, stem: str, suffix: str,
                     total_pages: int, tmp_dir: Path) -> list[Path]:
     """Sync wrapper around the async downloader."""
     return asyncio.run(download_images_async(dir_prefix, stem, suffix, total_pages, tmp_dir))
+
+
+def download_images_from_urls(image_urls: list[str], tmp_dir: Path, concurrency: int = 4) -> list[Path]:
+    return asyncio.run(download_images_from_urls_async(image_urls, tmp_dir, concurrency=concurrency))
 
 
 def images_to_pdf(image_paths: list[Path], output_pdf: Path,
@@ -323,15 +487,17 @@ def main():
     )
     parser.add_argument("--date", default=None,
                         help="Edition date in DD/MM/YYYY format (default depends on publication)")
+    parser.add_argument("--edition", type=int, default=None,
+                        help="Numeric edition id for Prajavani (default: 4)")
     parser.add_argument("--pages",   type=int, default=None,
                         help="Override page count (skip auto-detection)")
     parser.add_argument("--output",  default=None,
                         help="Output PDF filename (auto-named if omitted)")
     parser.add_argument("--tmp",     default="./mayura_tmp",
                         help="Temp directory for downloaded images")
-    parser.add_argument("--quality", type=int, default=95,
-                        help="JPEG quality after scaling (default 95). "
-                             "Use 100 for maximum quality (may increase file size).")
+    parser.add_argument("--quality", type=int, default=None,
+                        help="JPEG quality after scaling. "
+                             "Defaults: mayura/sudha=95, prajavani=70.")
     parser.add_argument("--scale",   type=float, default=1.0,
                         help="Downscale factor before encoding (default 1.0). "
                              "1.0 = original size, no quality downgrade.")
@@ -339,6 +505,64 @@ def main():
 
     cfg = PUBLICATIONS[args.publication]
     edition_date = args.date or default_date_for(args.publication)
+    quality = args.quality if args.quality is not None else default_quality_for(args.publication)
+
+    if args.publication == "prajavani":
+        requested_yyyymmdd = date_ddmmyyyy_to_yyyymmdd(edition_date)
+        edition_number = args.edition or cfg["default_edition"]
+
+        print(
+            f"\n[1/4] Fetching Prajavani editions and available dates "
+            f"for requested date={edition_date} (edition={edition_number}) …"
+        )
+        editions = get_prajavani_editions(cfg["api_base"], cfg["publisher"])
+        edition_numbers = {int(e["edition_number"]) for e in editions if e.get("edition_number") is not None}
+        if edition_number not in edition_numbers:
+            sample = ", ".join(str(x) for x in sorted(edition_numbers)[:15])
+            raise RuntimeError(
+                f"Edition {edition_number} is not available for Prajavani. "
+                f"Known edition numbers include: {sample}"
+            )
+
+        resolved_yyyymmdd = get_prajavani_latest_available_date(
+            cfg["api_base"], cfg["publisher"], edition_number, requested_yyyymmdd
+        )
+        if resolved_yyyymmdd != requested_yyyymmdd:
+            print(
+                f"      Requested date had no issue. Using latest available date: "
+                f"{resolved_yyyymmdd}"
+            )
+        else:
+            print(f"      Using requested date: {resolved_yyyymmdd}")
+
+        print("\n[2/4] Fetching Prajavani page metadata …")
+        payload = get_prajavani_data(
+            cfg["api_base"], cfg["publisher"], edition_number, resolved_yyyymmdd
+        )
+        index_payload = get_prajavani_index_payload(payload)
+        image_urls = get_prajavani_image_urls(payload, index_payload=index_payload)
+        total_discovered = len(image_urls)
+        if args.pages:
+            image_urls = image_urls[:args.pages]
+            print(f"      Limiting pages due to --pages={args.pages} (from {total_discovered})")
+        if not image_urls:
+            raise RuntimeError("No page images found in Prajavani payload.")
+        print(f"      Pages discovered: {len(image_urls)}")
+
+        tmp_dir = Path(args.tmp)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"\n[3/4] Downloading {len(image_urls)} pages to {tmp_dir}/ …\n")
+        image_paths = download_images_from_urls(image_urls, tmp_dir, concurrency=4)
+
+        if args.output:
+            out_pdf = Path(args.output)
+        else:
+            out_pdf = Path(f"prajavani_{resolved_yyyymmdd}_e{edition_number}.pdf")
+
+        print("\n[4/4] Building PDF …")
+        images_to_pdf(image_paths, out_pdf, quality=quality, scale=args.scale)
+        return
 
     # 1. Fetch edition metadata
     print(f"\n[1/4] Fetching {args.publication} edition list for date={edition_date} …")
@@ -376,7 +600,7 @@ def main():
     else:
         out_pdf = Path(auto_output_name(args.publication, stem))
 
-    images_to_pdf(image_paths, out_pdf, quality=args.quality, scale=args.scale)
+    images_to_pdf(image_paths, out_pdf, quality=quality, scale=args.scale)
 
 
 if __name__ == "__main__":
