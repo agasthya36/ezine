@@ -10,7 +10,7 @@ Usage:
     python mayura_download.py --date 01/03/2026 --pages 24 --output mayura_mar26.pdf
 
 Dependencies:
-    pip install requests Pillow
+    pip install requests aiohttp Pillow
 """
 
 import argparse
@@ -18,6 +18,8 @@ import sys
 import time
 from pathlib import Path
 
+import asyncio
+import aiohttp
 import requests
 from PIL import Image
 
@@ -109,99 +111,179 @@ def probe_page_count(dir_prefix: str, stem: str, suffix: str,
     return lo
 
 
+async def download_page(session: "aiohttp.ClientSession", url: str,
+                        dest: Path, page: int, total: int,
+                        semaphore: "asyncio.Semaphore") -> Path | None:
+    """Download a single page image, respecting the concurrency semaphore."""
+    if dest.exists():
+        print(f"  [cache] page {page:3d}/{total}")
+        return dest
+    async with semaphore:
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
+                r.raise_for_status()
+                dest.write_bytes(await r.read())
+                print(f"  ↓ page {page:3d}/{total}  {url}")
+                return dest
+        except Exception as e:
+            print(f"  ✗ page {page:3d} failed: {e}")
+            return None
+
+
+async def download_images_async(dir_prefix: str, stem: str, suffix: str,
+                                total_pages: int, tmp_dir: Path,
+                                concurrency: int = 8) -> list[Path]:
+    """Download all pages concurrently, return paths in page order."""
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; MayuraDownloader/1.0)"}
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async with aiohttp.ClientSession(headers=headers) as session:
+        tasks = [
+            download_page(
+                session,
+                build_page_url(dir_prefix, stem, suffix, page),
+                tmp_dir / f"page_{page:04d}.jpg",
+                page, total_pages, semaphore
+            )
+            for page in range(1, total_pages + 1)
+        ]
+        results = await asyncio.gather(*tasks)
+
+    # Filter out failures, preserve order
+    return [p for p in results if p is not None]
+
+
 def download_images(dir_prefix: str, stem: str, suffix: str,
                     total_pages: int, tmp_dir: Path) -> list[Path]:
-    """Download all page images into tmp_dir, return list of paths in order."""
-    paths = []
-    for page in range(1, total_pages + 1):
-        url  = build_page_url(dir_prefix, stem, suffix, page)
-        dest = tmp_dir / f"page_{page:04d}.jpg"
-
-        if dest.exists():
-            print(f"  [cache] page {page:3d}/{total_pages}")
-            paths.append(dest)
-            continue
-
-        print(f"  ↓ page {page:3d}/{total_pages}  {url}")
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=30, stream=True)
-            r.raise_for_status()
-            dest.write_bytes(r.content)
-            paths.append(dest)
-        except requests.HTTPError as e:
-            print(f"    ✗ skipped (HTTP {e.response.status_code})")
-        except Exception as e:
-            print(f"    ✗ skipped ({e})")
-
-        time.sleep(DELAY_SEC)
-
-    return paths
+    """Sync wrapper around the async downloader."""
+    return asyncio.run(download_images_async(dir_prefix, stem, suffix, total_pages, tmp_dir))
 
 
 def images_to_pdf(image_paths: list[Path], output_pdf: Path,
-                  quality: int = 75) -> None:
+                  quality: int = 75, scale: float = 1.0) -> None:
     """
-    Merge all downloaded images into a single PDF.
+    Embeds pages as raw DCTDecode JPEG objects in a hand-built PDF.
 
-    quality: JPEG re-encoding quality (1-95).
-             85  → near-lossless,  ~same size as original
-             75  → good quality,   ~50-60% of original size  (default)
-             60  → acceptable,     ~35-40% of original size
-             40  → readable but visibly lossy
+    scale:   downscale factor before re-encoding (most effective lever).
+             1.0 = original size  (~40 MB for Mayura)
+             0.7 = 70% dimensions (~12-15 MB, sharp on screen)
+             0.5 = 50% dimensions (~6-8 MB,  fine for reading)
+    quality: JPEG quality after scaling (75 is fine; below 60 rarely helps
+             further because JPEG re-encoding hits a quantisation floor).
     """
     import io
+
     if not image_paths:
         raise RuntimeError("No images to merge.")
 
-    print(f"\nBuilding PDF (JPEG quality={quality}) from {len(image_paths)} pages …")
-    pil_images = []
+    print(f"\nBuilding PDF (scale={scale}, quality={quality}) "
+          f"from {len(image_paths)} pages …")
+
+    jpeg_pages = []
     for p in image_paths:
         try:
             img = Image.open(p).convert("RGB")
-            if quality < 85:
-                # Re-encode in memory at target quality to reduce size
-                buf = io.BytesIO()
-                img.save(buf, format="JPEG", quality=quality, optimize=True)
-                buf.seek(0)
-                img = Image.open(buf).convert("RGB")
-                img.load()   # force decode before buf goes out of scope
-            pil_images.append(img)
+            if scale != 1.0:
+                new_w = max(1, int(img.width  * scale))
+                new_h = max(1, int(img.height * scale))
+                img = img.resize((new_w, new_h), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=quality, optimize=True)
+            data = buf.getvalue()
+            print(f"  {p.name}  {p.stat().st_size // 1024}KB → {len(data) // 1024}KB")
+            jpeg_pages.append((data, img.width, img.height))
         except Exception as e:
             print(f"  ✗ skipping {p.name}: {e}")
 
-    if not pil_images:
-        raise RuntimeError("All images failed to open.")
+    if not jpeg_pages:
+        raise RuntimeError("All images failed to process.")
 
-    first, rest = pil_images[0], pil_images[1:]
-    first.save(output_pdf, save_all=True, append_images=rest)
+    # Hand-built PDF: embed raw JPEG bytes via /DCTDecode (no Pillow re-encode)
+    parts = [b"%PDF-1.4\n"]
+    xrefs = []
+
+    def obj(content: bytes) -> int:
+        n = len(xrefs) + 1
+        xrefs.append(sum(len(p) for p in parts))
+        parts.append(f"{n} 0 obj\n".encode() + content + b"\nendobj\n")
+        return n
+
+    page_info = []
+    for jpeg_bytes, w, h in jpeg_pages:
+        img_id = obj((
+            f"<< /Type /XObject /Subtype /Image "
+            f"/Width {w} /Height {h} "
+            f"/ColorSpace /DeviceRGB /BitsPerComponent 8 "
+            f"/Filter /DCTDecode /Length {len(jpeg_bytes)} >>\nstream\n"
+        ).encode() + jpeg_bytes + b"\nendstream")
+
+        cs = f"q {w} 0 0 {h} 0 0 cm /Im{img_id} Do Q".encode()
+        content_id = obj(
+            f"<< /Length {len(cs)} >>\nstream\n".encode() + cs + b"\nendstream"
+        )
+        page_info.append((content_id, img_id, w, h))
+
+    pages_id = len(xrefs) + 1 + len(page_info)
+    page_ids = []
+    for content_id, img_id, w, h in page_info:
+        page_ids.append(obj((
+            f"<< /Type /Page /Parent {pages_id} 0 R "
+            f"/MediaBox [0 0 {w} {h}] "
+            f"/Contents {content_id} 0 R "
+            f"/Resources << /XObject << /Im{img_id} {img_id} 0 R >> >> >>"
+        ).encode()))
+
+    kids = " ".join(f"{i} 0 R" for i in page_ids)
+    actual_pages_id = obj(
+        f"<< /Type /Pages /Kids [{kids}] /Count {len(page_ids)} >>".encode()
+    )
+    assert actual_pages_id == pages_id
+
+    catalog_id = obj(f"<< /Type /Catalog /Pages {pages_id} 0 R >>".encode())
+
+    xref_offset = sum(len(p) for p in parts)
+    xref  = b"xref\n"
+    xref += f"0 {len(xrefs) + 1}\n".encode()
+    xref += b"0000000000 65535 f \n"
+    for offset in xrefs:
+        xref += f"{offset:010d} 00000 n \n".encode()
+    xref += (
+        f"trailer\n<< /Size {len(xrefs)+1} /Root {catalog_id} 0 R >>\n"
+        f"startxref\n{xref_offset}\n%%%%EOF\n"
+    ).encode()
+    parts.append(xref)
+
+    output_pdf.write_bytes(b"".join(parts))
     size_mb = output_pdf.stat().st_size / 1_048_576
-    print(f"✅  PDF saved → {output_pdf}  ({size_mb:.1f} MB)")
-    if size_mb > 24:
-        print("⚠️   Still over 24 MB — try a lower --quality value (e.g. 60).")
+    print(f"\n✅  PDF saved → {output_pdf}  ({size_mb:.1f} MB)")
+    if size_mb > 24.5:
+        print("⚠️   Over 24.5 MB — try --scale 0.6 or lower.")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="Download Mayura e-zine edition to PDF")
-    parser.add_argument("--date",   default="01/03/2026",
+    parser.add_argument("--date",    default="01/03/2026",
                         help="Edition date in DD/MM/YYYY format (default: 01/03/2026)")
-    parser.add_argument("--pages",  type=int, default=None,
+    parser.add_argument("--pages",   type=int, default=None,
                         help="Override page count (skip auto-detection)")
-    parser.add_argument("--output", default=None,
+    parser.add_argument("--output",  default=None,
                         help="Output PDF filename (auto-named if omitted)")
     parser.add_argument("--tmp",     default="./mayura_tmp",
                         help="Temp directory for downloaded images")
     parser.add_argument("--quality", type=int, default=75,
-                        help="JPEG re-encoding quality 1-95 (default 75 ≈ half the size). "
-                             "Use 85 for near-lossless, 60 for smallest file.")
+                        help="JPEG quality after scaling (default 75). "
+                             "Below 60 rarely helps due to JPEG re-encoding floor.")
+    parser.add_argument("--scale",   type=float, default=0.7,
+                        help="Downscale factor before encoding (default 0.7). "
+                             "0.7 = ~12-15 MB, 0.5 = ~6-8 MB, 1.0 = original size.")
     args = parser.parse_args()
 
     # 1. Fetch edition metadata
     print(f"\n[1/4] Fetching edition list for date={args.date} …")
     edition = get_latest_edition(args.date)
     print(f"      Edition: {edition.get('FileName', '?')}  |  "
-          f"DateFolder={edition.get('DateFolder', '?')}  |  "
           f"Fresh={edition.get('Fresh')}")
 
     full_page_url = edition["FullPageUrl"]
@@ -210,8 +292,8 @@ def main():
     # 2. Parse URL template
     dir_prefix, stem, suffix = parse_url_template(full_page_url)
     print(f"\n[2/4] URL template:\n"
-          f"      Dir  : {dir_prefix}\n"
-          f"      Stem : {stem}\n"
+          f"      Dir   : {dir_prefix}\n"
+          f"      Stem  : {stem}\n"
           f"      Suffix: {suffix}")
 
     # 3. Determine page count
@@ -229,10 +311,9 @@ def main():
     if args.output:
         out_pdf = Path(args.output)
     else:
-        # Auto-name from stem: my03MAR01-164 → mayura_03MAR01-164.pdf
         out_pdf = Path(f"mayura_{stem.replace('my', '', 1)}.pdf")
 
-    images_to_pdf(image_paths, out_pdf, quality=args.quality)
+    images_to_pdf(image_paths, out_pdf, quality=args.quality, scale=args.scale)
 
 
 if __name__ == "__main__":
