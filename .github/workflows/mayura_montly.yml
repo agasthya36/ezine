@@ -1,4 +1,4 @@
-name: Mayura Monthly Download
+name: Mayura Monthly Upload + Broadcast
 
 on:
   schedule:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:   # manual trigger from GitHub UI
 
 jobs:
-  download-and-send:
+  download-upload-and-broadcast:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -28,6 +28,7 @@ jobs:
         run: |
           echo "edition_date=$(date +'01/%m/%Y')" >> $GITHUB_OUTPUT
           echo "month_label=$(date +'%B %Y')"     >> $GITHUB_OUTPUT
+          echo "month_key=$(date +'%Y-%m')"       >> $GITHUB_OUTPUT
 
       - name: Download Mayura edition
         run: |
@@ -36,9 +37,18 @@ jobs:
             --scale 1.0 \
             --output mayura_latest.pdf
 
-      - name: Send PDF to Telegram
+      - name: Upload PDF to Cloudflare R2 cache
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          MONTH_LABEL: ${{ steps.date.outputs.month_label }}
-        run: python send_telegram.py
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx -y wrangler r2 object put \
+            "mayura-pdf-cache/pdfs/${{ steps.date.outputs.month_key }}/mayura_${{ steps.date.outputs.month_key }}.pdf" \
+            --file mayura_latest.pdf
+
+      - name: Trigger Worker broadcast from cache
+        env:
+          WORKER_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
+          WORKER_ADMIN_TOKEN: ${{ secrets.WORKER_ADMIN_TOKEN }}
+        run: |
+          curl -X POST "${WORKER_BASE_URL}/admin/run-monthly?token=${WORKER_ADMIN_TOKEN}"

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Wrangler/Cloudflare local files
+.wrangler/
+*.dev.vars
+.dev.vars
+
+# Env files
+.env
+.env.*
+
+# Runtime data (may contain user chat IDs)
+subscribers.json
+
+# Local artifacts
+*.pdf
+mayura_tmp/
