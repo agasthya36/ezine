@@ -7,7 +7,7 @@ on:
   workflow_dispatch:   # manual trigger from GitHub UI
 
 jobs:
-  download-and-email:
+  download-and-send:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -33,13 +33,12 @@ jobs:
         run: |
           python mayura_download.py \
             --date "${{ steps.date.outputs.edition_date }}" \
-            --scale 0.65 \
+            --scale 1.0 \
             --output mayura_latest.pdf
 
-      - name: Send PDF via email
+      - name: Send PDF to Telegram
         env:
-          GMAIL_USER: ${{ secrets.GMAIL_USER }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MONTH_LABEL: ${{ steps.date.outputs.month_label }}
-        run: python send_email.py
+        run: python send_telegram.py
