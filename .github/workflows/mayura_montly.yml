@@ -52,9 +52,11 @@ jobs:
           WORKER_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
           WORKER_ADMIN_TOKEN: ${{ secrets.WORKER_ADMIN_TOKEN }}
         run: |
-          RESP="$(curl -sS -w '\n%{http_code}' -X POST \"${WORKER_BASE_URL}/admin/run-monthly?token=${WORKER_ADMIN_TOKEN}\")"
-          BODY="$(echo \"$RESP\" | sed '$d')"
-          CODE="$(echo \"$RESP\" | tail -n1)"
+          BASE="${WORKER_BASE_URL%/}"
+          URL="${BASE}/admin/run-monthly"
+          RESP="$(curl -sS -w '\n%{http_code}' -X POST "$URL" -H "x-admin-token: ${WORKER_ADMIN_TOKEN}")"
+          BODY="$(echo "$RESP" | sed '$d')"
+          CODE="$(echo "$RESP" | tail -n1)"
           echo "Worker response code: $CODE"
           echo "Worker response body: $BODY"
           if [ "$CODE" != "200" ]; then
