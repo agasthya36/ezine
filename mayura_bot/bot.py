@@ -29,7 +29,7 @@ from pathlib import Path
 from flask import Flask, request, abort
 
 # ── Import downloader from parent dir or same dir ────────────────────────────
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from mayura_download import (
     get_latest_edition, parse_url_template,
     probe_page_count, download_images, images_to_pdf, build_page_url
