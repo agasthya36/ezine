@@ -1,4 +1,4 @@
-name: Prajavani Daily Upload
+name: Prajavani Daily Upload + Broadcast
 
 on:
   schedule:
@@ -47,3 +47,20 @@ jobs:
             "mayura-pdf-cache/pdfs/prajavani/${{ steps.date.outputs.date_key }}/prajavani_${{ steps.date.outputs.date_key }}_e4.pdf" \
             --file prajavani_latest.pdf \
             --remote
+
+      - name: Trigger Worker daily Prajavani broadcast from cache
+        env:
+          WORKER_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
+          WORKER_ADMIN_TOKEN: ${{ secrets.WORKER_ADMIN_TOKEN }}
+        run: |
+          BASE="${WORKER_BASE_URL%/}"
+          URL="${BASE}/admin/run-daily-prajavani"
+          RESP="$(curl -sS -w '\n%{http_code}' -X POST "$URL" -H "x-admin-token: ${WORKER_ADMIN_TOKEN}")"
+          BODY="$(echo "$RESP" | sed '$d')"
+          CODE="$(echo "$RESP" | tail -n1)"
+          echo "Worker response code: $CODE"
+          echo "Worker response body: $BODY"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::Worker trigger failed with HTTP $CODE"
+            exit 1
+          fi

@@ -3,6 +3,7 @@ const SUBSCRIBERS_PATH = "/subscribers";
 const IMPORT_SUBSCRIBERS_PATH = "/admin/import-subs";
 const RUN_MONTHLY_PATH = "/admin/run-monthly";
 const RUN_WEEKLY_SUDHA_PATH = "/admin/run-weekly-sudha";
+const RUN_DAILY_PRAJAVANI_PATH = "/admin/run-daily-prajavani";
 
 const SERIES = {
   mayura: {
@@ -16,6 +17,12 @@ const SERIES = {
     cadence: "weekly",
     expectedR2Key: (periodKey) => `pdfs/sudha/${periodKey}/sudha_${periodKey}.pdf`,
     filename: (periodKey) => `sudha_${periodKey}.pdf`,
+  },
+  prajavani: {
+    label: "ಪ್ರಜಾವಾಣಿ | Prajavani",
+    cadence: "daily",
+    expectedR2Key: (periodKey) => `pdfs/prajavani/${periodKey}/prajavani_${periodKey}_e4.pdf`,
+    filename: (periodKey) => `prajavani_${periodKey}_e4.pdf`,
   },
 };
 
@@ -41,6 +48,10 @@ export default {
 
     if (request.method === "POST" && url.pathname === RUN_WEEKLY_SUDHA_PATH) {
       return handleManualRunSudha(request, env, ctx);
+    }
+
+    if (request.method === "POST" && url.pathname === RUN_DAILY_PRAJAVANI_PATH) {
+      return handleManualRunPrajavani(request, env, ctx);
     }
 
     if (request.method === "POST" && url.pathname === `/${env.SECRET_PATH}`) {
@@ -78,6 +89,7 @@ async function handleWebhook(request, env, ctx) {
         "Commands:",
         "  /latest_mayura - send Mayura monthly cached edition",
         "  /latest_sudha - send Sudha weekly cached edition",
+        "  /latest_prajavani - send Prajavani daily cached edition",
         "  /stop - unsubscribe",
       ].join("\n"),
     );
@@ -90,8 +102,11 @@ async function handleWebhook(request, env, ctx) {
   } else if (text.startsWith("/latest_sudha")) {
     ctx.waitUntil(sendLatestToChat(env, chatId, "sudha"));
     await tgSendMessage(env, chatId, "Fetching Sudha cached/latest edition. You will receive it shortly.");
+  } else if (text.startsWith("/latest_prajavani")) {
+    ctx.waitUntil(sendLatestToChat(env, chatId, "prajavani"));
+    await tgSendMessage(env, chatId, "Fetching Prajavani cached/latest edition. You will receive it shortly.");
   } else {
-    await tgSendMessage(env, chatId, "Commands:\n  /start\n  /latest_mayura\n  /latest_sudha\n  /stop");
+    await tgSendMessage(env, chatId, "Commands:\n  /start\n  /latest_mayura\n  /latest_sudha\n  /latest_prajavani\n  /stop");
   }
 
   return new Response("ok");
@@ -101,8 +116,10 @@ async function handleHealth(env) {
   const ids = await listSubscriberIds(env);
   const mayuraPeriod = getPeriodKey("mayura");
   const sudhaPeriod = getPeriodKey("sudha");
+  const prajavaniPeriod = getPeriodKey("prajavani");
   const mayuraMeta = await getMetaWithFallback(env, "mayura", mayuraPeriod);
   const sudhaMeta = await getMetaWithFallback(env, "sudha", sudhaPeriod);
+  const prajavaniMeta = await getMetaWithFallback(env, "prajavani", prajavaniPeriod);
 
   return json({
     status: "ok",
@@ -111,6 +128,8 @@ async function handleHealth(env) {
     mayura_pdf_cached: Boolean(mayuraMeta?.r2_key),
     sudha_period: sudhaPeriod,
     sudha_pdf_cached: Boolean(sudhaMeta?.r2_key),
+    prajavani_period: prajavaniPeriod,
+    prajavani_pdf_cached: Boolean(prajavaniMeta?.r2_key),
   });
 }
 
@@ -167,6 +186,15 @@ async function handleManualRunSudha(request, env, ctx) {
 
   ctx.waitUntil(runBroadcast(env, "sudha"));
   return json({ status: "scheduled", series: "sudha" });
+}
+
+async function handleManualRunPrajavani(request, env, ctx) {
+  if (!isAdminAuthorized(request, env)) {
+    return new Response("forbidden", { status: 403 });
+  }
+
+  ctx.waitUntil(runBroadcast(env, "prajavani"));
+  return json({ status: "scheduled", series: "prajavani" });
 }
 
 function isAdminAuthorized(request, env) {
@@ -245,6 +273,10 @@ function getPeriodKey(series) {
     return getMonthKey();
   }
 
+  if (SERIES[series].cadence === "daily") {
+    return getDateKey();
+  }
+
   return getIsoWeekKeyInKolkata();
 }
 
@@ -284,6 +316,20 @@ function getIsoWeekKeyInKolkata() {
 
   const weekNumber = 1 + Math.round((date - firstThursday) / (7 * 24 * 60 * 60 * 1000));
   return `${isoYear}-W${String(weekNumber).padStart(2, "0")}`;
+}
+
+function getDateKey() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const year = parts.find((p) => p.type === "year")?.value;
+  const month = parts.find((p) => p.type === "month")?.value;
+  const day = parts.find((p) => p.type === "day")?.value;
+  return `${year}-${month}-${day}`;
 }
 
 function caption(series, periodKey) {
