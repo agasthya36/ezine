@@ -2,10 +2,9 @@ name: Mayura Monthly Download
 
 on:
   schedule:
-    # Runs on the 2nd of every month at 6:00 AM UTC (11:30 AM IST)
-    # The 1st-of-month edition is usually live by then
+    # 2nd of every month at 6:00 AM UTC (11:30 AM IST)
     - cron: "0 6 2 * *"
-  workflow_dispatch:   # allows manual trigger from GitHub UI
+  workflow_dispatch:   # manual trigger from GitHub UI
 
 jobs:
   download-and-email:
@@ -22,12 +21,11 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests Pillow
+        run: pip install requests Pillow google-api-python-client google-auth
 
       - name: Compute edition date (1st of current month)
         id: date
         run: |
-          # Format: DD/MM/YYYY — always the 1st
           echo "edition_date=$(date +'01/%m/%Y')" >> $GITHUB_OUTPUT
           echo "month_label=$(date +'%B %Y')"     >> $GITHUB_OUTPUT
 
@@ -35,13 +33,14 @@ jobs:
         run: |
           python mayura_download.py \
             --date "${{ steps.date.outputs.edition_date }}" \
-            --quality 70 \
             --output mayura_latest.pdf
 
-      - name: Send PDF via email
+      - name: Upload to Drive and send email
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          GDRIVE_CREDENTIALS_JSON: ${{ secrets.GDRIVE_CREDENTIALS_JSON }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
           MONTH_LABEL: ${{ steps.date.outputs.month_label }}
         run: python send_email.py
