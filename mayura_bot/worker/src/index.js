@@ -269,7 +269,7 @@ async function ensurePdfAndFileId(env, series, periodKey, seedChatId) {
     }
 
     meta.telegram_file_id = fileId;
-    await saveMeta(env, series, periodKey, meta);
+    await saveMeta(env, series, meta);
     return { meta, fileId: meta.telegram_file_id, justUploaded: true };
   }
 
@@ -443,44 +443,43 @@ function subscriberKey(chatId) {
   return `sub:${chatId}`;
 }
 
-function metaKey(series, periodKey) {
-  return `meta:${series}:${periodKey}`;
+function metaKey(series) {
+  return `meta:${series}:latest`;
 }
 
 function expectedR2Key(series, periodKey) {
   return SERIES[series].expectedR2Key(periodKey);
 }
 
-async function getMeta(env, series, periodKey) {
-  const raw = await env.SUBSCRIBERS.get(metaKey(series, periodKey));
+async function getMeta(env, series) {
+  const raw = await env.SUBSCRIBERS.get(metaKey(series));
   return raw ? JSON.parse(raw) : null;
 }
 
 async function getMetaWithFallback(env, series, periodKey) {
-  const existing = await getMeta(env, series, periodKey);
-  if (existing?.r2_key) {
+  const existing = await getMeta(env, series);
+  if (existing?.r2_key && existing?.period_key === periodKey) {
     return existing;
   }
 
   const r2Key = expectedR2Key(series, periodKey);
   const head = await env.PDF_CACHE.head(r2Key);
   if (!head) {
-    return existing || null;
+    return null;
   }
 
   const next = {
-    ...(existing || {}),
     series,
     period_key: periodKey,
     r2_key: r2Key,
     discovered_at: new Date().toISOString(),
   };
-  await saveMeta(env, series, periodKey, next);
+  await saveMeta(env, series, next);
   return next;
 }
 
-async function saveMeta(env, series, periodKey, meta) {
-  await env.SUBSCRIBERS.put(metaKey(series, periodKey), JSON.stringify(meta));
+async function saveMeta(env, series, meta) {
+  await env.SUBSCRIBERS.put(metaKey(series), JSON.stringify(meta));
 }
 
 const R2_KEY_PATTERN = {
