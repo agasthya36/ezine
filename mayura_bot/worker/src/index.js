@@ -205,7 +205,7 @@ function isAdminAuthorized(request, env) {
 
 async function sendLatestToChat(env, chatId, series) {
   try {
-    const periodKey = getPeriodKey(series);
+    const periodKey = (await findLatestPeriodKeyFromR2(env, series)) ?? getPeriodKey(series);
     const { fileId } = await ensurePdfAndFileId(env, series, periodKey, chatId);
     await tgSendDocumentByFileId(env, chatId, fileId, caption(series, periodKey));
   } catch (err) {
@@ -473,6 +473,30 @@ async function getMetaWithFallback(env, series, periodKey) {
 
 async function saveMeta(env, series, periodKey, meta) {
   await env.SUBSCRIBERS.put(metaKey(series, periodKey), JSON.stringify(meta));
+}
+
+const R2_KEY_PATTERN = {
+  mayura:    /^pdfs\/\d{4}-\d{2}\/mayura_(\d{4}-\d{2})\.pdf$/,
+  sudha:     /^pdfs\/sudha\/\d{4}-W\d{2}\/sudha_(\d{4}-W\d{2})\.pdf$/,
+  prajavani: /^pdfs\/prajavani\/\d{4}-\d{2}-\d{2}\/prajavani_(\d{4}-\d{2}-\d{2})_e4\.pdf$/,
+};
+
+const R2_KEY_PREFIX = {
+  mayura:    "pdfs/",
+  sudha:     "pdfs/sudha/",
+  prajavani: "pdfs/prajavani/",
+};
+
+async function findLatestPeriodKeyFromR2(env, series) {
+  const re = R2_KEY_PATTERN[series];
+  const prefix = R2_KEY_PREFIX[series];
+  const listed = await env.PDF_CACHE.list({ prefix, limit: 1000 });
+  const candidates = [];
+  for (const obj of listed.objects) {
+    const m = obj.key.match(re);
+    if (m) candidates.push(m[1]);
+  }
+  return candidates.length ? candidates.sort().at(-1) : null;
 }
 
 function json(payload, status = 200) {
