@@ -27,6 +27,20 @@ const SERIES = {
 };
 
 export default {
+  async scheduled(event, env, ctx) {
+    const cron = event.cron;
+    // "30 2 1 * *"  → monthly Mayura
+    // "30 2 * * 2"  → weekly Sudha (Tuesday)
+    // "30 2 * * *"  → daily Prajavani
+    if (cron === "30 2 1 * *") {
+      ctx.waitUntil(dispatchGithubWorkflow(env, "mayura_montly.yml"));
+    } else if (cron === "30 2 * * 2") {
+      ctx.waitUntil(dispatchGithubWorkflow(env, "sudha_weekly.yml"));
+    } else if (cron === "30 2 * * *") {
+      ctx.waitUntil(dispatchGithubWorkflow(env, "prajavani_daily.yml"));
+    }
+  },
+
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
@@ -511,4 +525,24 @@ function json(payload, status = 200) {
     status,
     headers: { "content-type": "application/json" },
   });
+}
+
+async function dispatchGithubWorkflow(env, workflowFile) {
+  const [owner, repo] = env.GITHUB_REPO.split("/");
+  const url = `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflowFile}/dispatches`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
+      "Accept": "application/vnd.github+json",
+      "Content-Type": "application/json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "mayura-bot-worker",
+    },
+    body: JSON.stringify({ ref: "main" }),
+  });
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new Error(`GitHub dispatch failed (${resp.status}): ${body}`);
+  }
 }

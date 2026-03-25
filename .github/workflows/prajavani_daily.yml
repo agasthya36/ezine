@@ -1,9 +1,6 @@
 name: Prajavani Daily Upload + Broadcast
 
 on:
-  schedule:
-    # Daily at 1:30 AM UTC (7:00 AM IST)
-    - cron: "30 1 * * *"
   workflow_dispatch:
 
 jobs:

@@ -1,9 +1,6 @@
 name: Sudha Weekly Upload + Broadcast
 
 on:
-  schedule:
-    # Every Thursday at 6:00 AM UTC (11:30 AM IST)
-    - cron: "0 6 * * 4"
   workflow_dispatch:
 
 jobs:
