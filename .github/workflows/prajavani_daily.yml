@@ -21,7 +21,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests aiohttp Pillow pypdf
+        run: pip install requests aiohttp pypdf
 
       - name: Compute edition date
         id: date
@@ -35,7 +35,6 @@ jobs:
             --publication prajavani \
             --edition 4 \
             --date "${{ steps.date.outputs.edition_date }}" \
-            --scale 0.7 \
             --output prajavani_latest.pdf
 
       - name: Upload PDF to Cloudflare R2 cache

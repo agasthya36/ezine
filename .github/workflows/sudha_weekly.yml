@@ -21,7 +21,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests aiohttp Pillow
+        run: pip install requests aiohttp pypdf
 
       - name: Compute edition date + week key
         id: date
@@ -34,7 +34,6 @@ jobs:
           python mayura_download.py \
             --publication sudha \
             --date "${{ steps.date.outputs.edition_date }}" \
-            --scale 0.7 \
             --output sudha_latest.pdf
 
       - name: Upload PDF to Cloudflare R2 cache
