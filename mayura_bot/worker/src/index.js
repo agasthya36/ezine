@@ -83,16 +83,18 @@ async function handleWebhook(request, env, ctx) {
       env,
       chatId,
       [
-        `ನಮಸ್ಕಾರ ${firstName}😊`,
-        "You are now subscribed to bot updates.",
-        "You will receive the latest editions of Mayura, Sudha, and Prajavani as they become available.",
-        "Try the commands below to get the latest cached editions right away.",
+        `ನಮಸ್ಕಾರ ${firstName} 😊`,
+        "",
+        "You are now subscribed to e-zine updates.",
+        "You will receive Mayura, Sudha, and Prajavani editions as they become available.",
+        "",
         "Commands:",
-        "  /latest_mayura - send Mayura monthly cached edition",
-        "  /latest_sudha - send Sudha weekly cached edition",
-        "  /latest_prajavani - send Prajavani daily cached edition",
-        "  /stop - unsubscribe",
-        "Contact @cosmos1609 if you have any questions or issues.",
+        "  /latest_mayura    — Mayura (monthly)",
+        "  /latest_sudha     — Sudha (weekly)",
+        "  /latest_prajavani — Prajavani (daily)",
+        "  /stop             — Unsubscribe",
+        "",
+        "Questions? Contact @cosmos1609",
       ].join("\n"),
     );
   } else if (text.startsWith("/stop")) {
@@ -208,8 +210,10 @@ function isAdminAuthorized(request, env) {
 async function sendLatestToChat(env, chatId, series) {
   try {
     const periodKey = (await findLatestPeriodKeyFromR2(env, series)) ?? getPeriodKey(series);
-    const { fileId } = await ensurePdfAndFileId(env, series, periodKey, chatId);
-    await tgSendDocumentByFileId(env, chatId, fileId, caption(series, periodKey));
+    const { fileId, justUploaded } = await ensurePdfAndFileId(env, series, periodKey, chatId);
+    if (!justUploaded) {
+      await tgSendDocumentByFileId(env, chatId, fileId, caption(series, periodKey));
+    }
   } catch (err) {
     await tgSendMessage(env, chatId, `Failed to send ${series} edition: ${String(err)}`);
   }
@@ -224,10 +228,11 @@ async function runBroadcast(env, series) {
   }
 
   const seedChatId = subscribers[0];
-  const { fileId } = await ensurePdfAndFileId(env, series, periodKey, seedChatId);
+  const { fileId, justUploaded } = await ensurePdfAndFileId(env, series, periodKey, seedChatId);
   const fileCaption = caption(series, periodKey);
 
   for (const chatId of subscribers) {
+    if (justUploaded && chatId === seedChatId) continue; // already sent via upload
     try {
       await tgSendDocumentByFileId(env, chatId, fileId, fileCaption);
     } catch (err) {
@@ -265,9 +270,10 @@ async function ensurePdfAndFileId(env, series, periodKey, seedChatId) {
 
     meta.telegram_file_id = fileId;
     await saveMeta(env, series, periodKey, meta);
+    return { meta, fileId: meta.telegram_file_id, justUploaded: true };
   }
 
-  return { meta, fileId: meta.telegram_file_id };
+  return { meta, fileId: meta.telegram_file_id, justUploaded: false };
 }
 
 function getPeriodKey(series) {
