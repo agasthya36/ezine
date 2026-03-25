@@ -4,11 +4,21 @@ compatibility_date = "2026-03-24"
 
 [[kv_namespaces]]
 binding = "SUBSCRIBERS"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "16f852aca70c4596a93845091d054e10"
 
 [[r2_buckets]]
 binding = "PDF_CACHE"
-bucket_name = "REPLACE_WITH_R2_BUCKET_NAME"
+bucket_name = "mayura-pdf-cache"
 
 [vars]
-SECRET_PATH = "REPLACE_WITH_RANDOM_SECRET_PATH"
+GITHUB_REPO = "agasthya36/ezine"
+
+[secrets]
+required = ["SECRET_PATH", "GITHUB_TOKEN"]
+
+[triggers]
+crons = [
+  "30 2 2 * *",   # Mayura: 2nd of every month at 02:30 UTC (08:00 IST)
+  "30 2 * * 2",   # Sudha: every Tuesday at 02:30 UTC (08:00 IST)
+  "30 1 * * *",   # Prajavani: every day at 01:30 UTC (07:00 IST)
+]
