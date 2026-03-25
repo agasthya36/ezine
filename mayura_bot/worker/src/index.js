@@ -83,14 +83,16 @@ async function handleWebhook(request, env, ctx) {
       env,
       chatId,
       [
-        `Namaskara ${firstName}.`,
-        "You are now subscribed to e-zine updates.",
-        "",
+        `ನಮಸ್ಕಾರ ${firstName}😊`,
+        "You are now subscribed to bot updates.",
+        "You will receive the latest editions of Mayura, Sudha, and Prajavani as they become available.",
+        "Try the commands below to get the latest cached editions right away.",
         "Commands:",
         "  /latest_mayura - send Mayura monthly cached edition",
         "  /latest_sudha - send Sudha weekly cached edition",
         "  /latest_prajavani - send Prajavani daily cached edition",
         "  /stop - unsubscribe",
+        "Contact @cosmos1609 if you have any questions or issues.",
       ].join("\n"),
     );
   } else if (text.startsWith("/stop")) {
