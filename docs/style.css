@@ -59,6 +59,14 @@ body {
   color: var(--text);
 }
 
+.wordmark-kn {
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
 .header-nav {
   display: flex;
   align-items: center;
