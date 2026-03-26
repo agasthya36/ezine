@@ -14,7 +14,7 @@ bucket_name = "mayura-pdf-cache"
 GITHUB_REPO = "agasthya36/ezine"
 
 [secrets]
-required = ["SECRET_PATH", "GITHUB_TOKEN"]
+required = ["SECRET_PATH", "GITHUB_TOKEN", "TELEGRAM_BOT_TOKEN", "CLOUDFLARE_API", "ADMIN_TOKEN"]
 
 [triggers]
 crons = [
