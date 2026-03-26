@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Zine Bot | Mayura, Sudha, Prajavani, Deccan Herald</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+</head>
+<body class="dark-theme">
+    <nav class="glass-nav">
+        <div class="container nav-content">
+            <div class="logo">
+                <img src="assets/logo.png" alt="Bot Logo" class="logo-img">
+                <span class="logo-text">E-Zine Bot</span>
+            </div>
+            <div class="nav-right">
+                <div class="lang-toggle" id="langToggle">
+                    <span class="lang-label active" data-lang="en">EN</span>
+                    <div class="toggle-slider"></div>
+                    <span class="lang-label" data-lang="kn">ಕನ್ನಡ</span>
+                </div>
+                <a href="https://github.com/agasthya36/ezine" class="github-link" target="_blank">
+                    <svg height="24" viewBox="0 0 16 16" width="24"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <header class="hero">
+        <div class="hero-bg"></div>
+        <div class="container hero-content">
+            <h1 id="heroTitle" data-en="Your Favorite Magazines, Delivered Smartly." data-kn="ನಿಮ್ಮ ಮೆಚ್ಚಿನ ಪತ್ರಿಕೆಗಳು, ಈಗ ನಿಮ್ಮ ಟೆಲಿಗ್ರಾಮ್‌ನಲ್ಲಿ.">Your Favorite Magazines, Delivered Smartly.</h1>
+            <p id="heroSubtitle" data-en="Receive Mayura, Sudha, Prajavani, and Deccan Herald editions automatically in Telegram. No more searching, just reading." data-kn="ಮಯೂರ, ಸುಧಾ, ಪ್ರಜಾವಾಣಿ ಮತ್ತು ಡೆಕ್ಕನ್ ಹೆರಾಲ್ಡ್ ಆವೃತ್ತಿಗಳನ್ನು ಈಗ ಸುಲಭವಾಗಿ ಟೆಲಿಗ್ರಾಮ್‌ನಲ್ಲಿ ಪಡೆಯಿರಿ.">Receive Mayura, Sudha, Prajavani, and Deccan Herald editions automatically in Telegram.</p>
+            <div class="hero-cta">
+                <a href="https://t.me/mayura4096_bot" class="btn btn-primary">
+                    <span id="btnText" data-en="Add to Telegram" data-kn="ಟೆಲಿಗ್ರಾಮ್‌ಗೆ ಸೇರಿಸಿ">Add to Telegram</span>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <section class="publications">
+        <div class="container">
+            <h2 id="pubTitle" data-en="Supported Publications" data-kn="ಬೆಂಬಲಿತ ಪ್ರಕಟಣೆಗಳು">Supported Publications</h2>
+            <div class="pub-grid">
+                <div class="pub-card glass-card">
+                    <div class="pub-icon">🦋</div>
+                    <h3>Mayura</h3>
+                    <p data-en="Monthly literature and culture magazine." data-kn="ಮಾಸಿಕ ಸಾಹಿತ್ಯ ಮತ್ತು ಸಾಂಸ್ಕೃತಿಕ ಪತ್ರಿಕೆ.">Monthly literature and culture magazine.</p>
+                    <span class="badge" data-en="Monthly" data-kn="ಮಾಸಿಕ">Monthly</span>
+                </div>
+                <div class="pub-card glass-card">
+                    <div class="pub-icon">🌸</div>
+                    <h3>Sudha</h3>
+                    <p data-en="Weekly family magazine with rich content." data-kn="ಶ್ರೀಮಂತ ವಿಷಯವುಳ್ಳ ಸಾಪ್ತಾಹಿಕ ಪೌಟುಂಬಿಕ ಪತ್ರಿಕೆ.">Weekly family magazine with rich content.</p>
+                    <span class="badge" data-en="Weekly" data-kn="ಸಾಪ್ತಾಹಿಕ">Weekly</span>
+                </div>
+                <div class="pub-card glass-card">
+                    <div class="pub-icon">📰</div>
+                    <h3>Prajavani</h3>
+                    <p data-en="Leading Kannada daily newspaper." data-kn="ಪ್ರಮುಖ ಕನ್ನಡ ದಿನಪತ್ರಿಕೆ.">Leading Kannada daily newspaper.</p>
+                    <span class="badge" data-en="Daily" data-kn="ದಿನಪತ್ರಿಕೆ">Daily</span>
+                </div>
+                <div class="pub-card glass-card">
+                    <div class="pub-icon">🗞️</div>
+                    <h3>Deccan Herald</h3>
+                    <p data-en="Premier English daily from Karnataka." data-kn="ಕರ್ನಾಟಕದ ಪ್ರಮುಖ ಇಂಗ್ಲಿಷ್ ದಿನಪತ್ರಿಕೆ.">Premier English daily from Karnataka.</p>
+                    <span class="badge" data-en="Daily" data-kn="ದಿನಪತ್ರಿಕೆ">Daily</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="features glass-section">
+        <div class="container grid-2">
+            <div class="feature-text">
+                <h2 id="featureTitle" data-en="Manage Your Preferences" data-kn="ನಿಮ್ಮ ಆಯ್ಕೆಗಳನ್ನು ನಿರ್ವಹಿಸಿ">Manage Your Preferences</h2>
+                <p id="featureDesc" data-en="Choice is yours. Use the interactive menu to toggle exactly which publications you want to receive. Our smart bot remembers your choice." data-kn="ಪತ್ರಿಕೆಗಳನ್ನು ಪಡೆಯಲು ನಿಮ್ಮದೇ ಆದ ಆಯ್ಕೆ ಇರಲಿ. ಯಾವ ಪತ್ರಿಕೆ ಬೇಕು ಎಂಬುದನ್ನು ನೀವೇ ನಿರ್ಧರಿಸಿ.">Choice is yours. Use the interactive menu to toggle exactly which publications you want to receive.</p>
+                <ul class="feature-list">
+                    <li data-en="Native Telegram Inline Buttons" data-kn="ಟೆಲಿಗ್ರಾಮ್ ಇನ್-ಲೈನ್ ಬಟನ್‌ಗಳು">Native Telegram Inline Buttons</li>
+                    <li data-en="Bilingual Support (English & Kannada)" data-kn="ದ್ವಿಭಾಷಾ ಬೆಂಬಲ (ಇಂಗ್ಲಿಷ್ ಮತ್ತು ಕನ್ನಡ)">Bilingual Support (English & Kannada)</li>
+                    <li data-en="Instant Toggle" data-kn="ತಕ್ಷಣದ ಬದಲಾವಣೆ">Instant Toggle</li>
+                </ul>
+            </div>
+            <div class="feature-visual">
+                <div class="telegram-mockup">
+                    <div class="msg">
+                        <div class="typing">...</div>
+                    </div>
+                    <div class="msg bot-msg">
+                        <p id="mockupText" data-en="Select publications to receive:" data-kn="ಸ್ವೀಕರಿಸಲು ಪ್ರಕಟಣೆಗಳನ್ನು ಆರಿಸಿ:">Select publications to receive:</p>
+                        <div class="mockup-buttons">
+                            <button class="mock-btn">✅ Mayura</button>
+                            <button class="mock-btn">✅ Sudha</button>
+                            <button class="mock-btn">❌ Prajavani</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="tech-section">
+        <div class="container">
+            <button class="tech-toggle" id="techToggle">
+                <span id="techBtnText" data-en="Show Technical Details" data-kn="ತಾಂತ್ರಿಕ ವಿವರಗಳನ್ನು ತೋರಿಸಿ">Show Technical Details</span>
+                <span class="arrow">▼</span>
+            </button>
+            <div class="tech-content" id="techContent">
+                <div class="tech-grid">
+                    <div class="tech-card">
+                        <h4>GitHub Actions</h4>
+                        <p>Scheduled scrapers run daily using Python to compile PDFs from official e-paper APIs.</p>
+                    </div>
+                    <div class="tech-card">
+                        <h4>Cloudflare R2</h4>
+                        <p>High-performance object storage acting as a cache for PDF editions.</p>
+                    </div>
+                    <div class="tech-card">
+                        <h4>Cloudflare Workers</h4>
+                        <p>Serverless logic handling Telegram webhooks, subscriber KV storage, and delivery triggers.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container footer-content">
+            <p>&copy; 2026 E-Zine Bot Project. Built for the community.</p>
+            <div class="footer-links">
+                <a href="https://github.com/agasthya36/ezine">GitHub Repo</a>
+                <a href="https://t.me/cosmos1609">Support</a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
