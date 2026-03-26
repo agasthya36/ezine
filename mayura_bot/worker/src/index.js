@@ -29,14 +29,14 @@ const SERIES = {
 export default {
   async scheduled(event, env, ctx) {
     const cron = event.cron;
-    // "30 2 1 * *"  → monthly Mayura
-    // "30 2 * * 2"  → weekly Sudha (Tuesday)
-    // "30 2 * * *"  → daily Prajavani
-    if (cron === "30 2 1 * *") {
-      ctx.waitUntil(dispatchGithubWorkflow(env, "mayura_montly.yml"));
+    // "30 2 2 * *"  → monthly Mayura (2nd of month at 02:30 UTC)
+    // "30 2 * * 2"  → weekly Sudha (Tuesday at 02:30 UTC)
+    // "30 1 * * *"  → daily Prajavani (01:30 UTC)
+    if (cron === "30 2 2 * *") {
+      ctx.waitUntil(dispatchGithubWorkflow(env, "mayura_monthly.yml"));
     } else if (cron === "30 2 * * 2") {
       ctx.waitUntil(dispatchGithubWorkflow(env, "sudha_weekly.yml"));
-    } else if (cron === "30 2 * * *") {
+    } else if (cron === "30 1 * * *") {
       ctx.waitUntil(dispatchGithubWorkflow(env, "prajavani_daily.yml"));
     }
   },
