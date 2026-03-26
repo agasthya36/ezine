@@ -82,6 +82,10 @@ async function handleWebhook(request, env, ctx) {
     return new Response("bad request", { status: 400 });
   }
 
+  if (update.callback_query) {
+    return handleCallbackQuery(update.callback_query, env, ctx);
+  }
+
   const msg = update.message || update.channel_post;
   if (!msg || !msg.chat || !msg.chat.id) {
     return new Response("ok");
@@ -103,14 +107,18 @@ async function handleWebhook(request, env, ctx) {
         "You will receive Mayura, Sudha, and Prajavani editions as they become available.",
         "",
         "Commands:",
+        "  /prefs            — Manage Subscriptions",
         "  /latest_mayura    — Mayura (monthly)",
         "  /latest_sudha     — Sudha (weekly)",
         "  /latest_prajavani — Prajavani (daily)",
-        "  /stop             — Unsubscribe",
+        "  /stop             — Unsubscribe from all",
         "",
         "Questions? Contact @cosmos1609",
       ].join("\n"),
     );
+    await sendPrefsMenu(env, chatId);
+  } else if (text.startsWith("/prefs")) {
+    await sendPrefsMenu(env, chatId);
   } else if (text.startsWith("/stop")) {
     await removeSubscriber(env, chatId);
     await tgSendMessage(env, chatId, "You have been unsubscribed. Send /start to resubscribe.");
@@ -124,10 +132,68 @@ async function handleWebhook(request, env, ctx) {
     ctx.waitUntil(sendLatestToChat(env, chatId, "prajavani"));
     await tgSendMessage(env, chatId, "Fetching Prajavani cached/latest edition. You will receive it shortly.");
   } else {
-    await tgSendMessage(env, chatId, "Commands:\n  /start\n  /latest_mayura\n  /latest_sudha\n  /latest_prajavani\n  /stop");
+    await tgSendMessage(env, chatId, "Commands:\n  /start\n  /prefs\n  /latest_mayura\n  /latest_sudha\n  /latest_prajavani\n  /stop");
   }
 
   return new Response("ok");
+}
+
+async function handleCallbackQuery(cbq, env, ctx) {
+  const chatId = String(cbq.message?.chat?.id);
+  const data = cbq.data;
+  
+  if (!chatId || !data) return new Response("ok");
+
+  if (data.startsWith("toggle:")) {
+    const series = data.slice(7);
+    if (["mayura", "sudha", "prajavani"].includes(series)) {
+      const params = await getSubscriberPrefsAndValue(env, chatId);
+      if (params) {
+        const currentPrefs = params.metadata;
+        const newPrefs = { ...currentPrefs };
+        newPrefs[series] = !currentPrefs[series];
+        await updatePreferences(env, chatId, newPrefs);
+        
+        await tgEditMessageReplyMarkup(env, chatId, cbq.message.message_id, generatePrefsKeyboard(newPrefs));
+        
+        const isSubscribed = newPrefs[series];
+        const seriesEn = series.charAt(0).toUpperCase() + series.slice(1);
+        const seriesKn = series === 'mayura' ? 'ಮಯೂರ' : series === 'sudha' ? 'ಸುಧಾ' : 'ಪ್ರಜಾವಾಣಿ';
+        const actionEn = isSubscribed ? "Subscribed to" : "Unsubscribed from";
+        const actionKn = isSubscribed ? "ಗೆ ಚಂದಾದಾರರಾಗಿದ್ದೀರಿ" : " ಚಂದಾದಾರಿಕೆಯನ್ನು ರದ್ದುಗೊಳಿಸಲಾಗಿದೆ";
+        
+        await tgAnswerCallbackQuery(env, cbq.id, `${actionEn} ${seriesEn}\n${seriesKn}${actionKn}`, true);
+      } else {
+        await tgAnswerCallbackQuery(env, cbq.id, `Error: Please /start first.`);
+      }
+    }
+  }
+
+  return new Response("ok");
+}
+
+async function sendPrefsMenu(env, chatId) {
+  const params = await getSubscriberPrefsAndValue(env, chatId);
+  if (!params) {
+    return tgSendMessage(env, chatId, "Please /start first.");
+  }
+  
+  await tgSendMessageWithKeyboard(
+    env, 
+    chatId, 
+    "<b>ಚಂದಾದಾರಿಕೆ ಸೆಟ್ಟಿಂಗ್‌ಗಳು | Subscription Preferences</b>\n\nಯಾವ ಪ್ರಕಟಣೆಗಳನ್ನು ಸ್ವೀಕರಿಸಬೇಕೆಂದು ಆಯ್ಕೆ ಮಾಡಲು ಕೆಳಗಿನ ಬಟನ್‌ಗಳನ್ನು ಒತ್ತಿ:\nTap the buttons below to toggle which publications you receive:", 
+    generatePrefsKeyboard(params.metadata)
+  );
+}
+
+function generatePrefsKeyboard(prefs) {
+  return {
+    inline_keyboard: [
+      [{ text: `${prefs.mayura ? "✅" : "❌"} ಮಯೂರ | Mayura`, callback_data: `toggle:mayura` }],
+      [{ text: `${prefs.sudha ? "✅" : "❌"} ಸುಧಾ | Sudha`, callback_data: `toggle:sudha` }],
+      [{ text: `${prefs.prajavani ? "✅" : "❌"} ಪ್ರಜಾವಾಣಿ | Prajavani`, callback_data: `toggle:prajavani` }]
+    ]
+  };
 }
 
 async function handleHealth(env) {
@@ -235,7 +301,7 @@ async function sendLatestToChat(env, chatId, series) {
 
 async function runBroadcast(env, series) {
   const periodKey = getPeriodKey(series);
-  const subscribers = await listSubscriberIds(env);
+  const subscribers = await listSubscriberIds(env, series);
 
   if (!subscribers.length) {
     return;
@@ -372,6 +438,41 @@ async function tgSendMessage(env, chatId, text) {
   }
 }
 
+async function tgSendMessageWithKeyboard(env, chatId, text, replyMarkup) {
+  const endpoint = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`;
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", reply_markup: replyMarkup }),
+  });
+
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new Error(`Telegram tgSendMessageWithKeyboard failed (${resp.status}): ${body}`);
+  }
+}
+
+async function tgEditMessageReplyMarkup(env, chatId, messageId, replyMarkup) {
+  const endpoint = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/editMessageReplyMarkup`;
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, message_id: messageId, reply_markup: replyMarkup }),
+  });
+  if (!resp.ok) {
+    console.error(`Telegram editMessageReplyMarkup failed (${resp.status})`);
+  }
+}
+
+async function tgAnswerCallbackQuery(env, callbackQueryId, text) {
+  const endpoint = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`;
+  await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ callback_query_id: callbackQueryId, text }),
+  });
+}
+
 async function tgSendDocumentByFileId(env, chatId, fileId, fileCaption) {
   const endpoint = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendDocument`;
   const resp = await fetch(endpoint, {
@@ -422,29 +523,58 @@ async function tgUploadDocument(env, chatId, bytes, filename, fileCaption) {
   return result;
 }
 
+async function getSubscriberPrefsAndValue(env, chatId) {
+  const { value, metadata } = await env.SUBSCRIBERS.getWithMetadata(subscriberKey(chatId));
+  if (!value) return null;
+  return { value: JSON.parse(value), metadata: metadata || { mayura: true, sudha: true, prajavani: true } };
+}
+
+async function updatePreferences(env, chatId, newPrefs) {
+  let params = await getSubscriberPrefsAndValue(env, chatId);
+  if (!params) {
+    params = {
+      value: { first_name: "unknown", subscribed_at: new Date().toISOString() },
+      metadata: { mayura: true, sudha: true, prajavani: true },
+    };
+  }
+  const updatedMetadata = { ...params.metadata, ...newPrefs };
+  await env.SUBSCRIBERS.put(subscriberKey(chatId), JSON.stringify(params.value), { metadata: updatedMetadata });
+  return updatedMetadata;
+}
+
 async function addSubscriber(env, chatId, firstName) {
-  const value = JSON.stringify({
+  const params = await getSubscriberPrefsAndValue(env, chatId);
+  let valueObj = params?.value || {
     first_name: firstName,
     subscribed_at: new Date().toISOString(),
-  });
-  await env.SUBSCRIBERS.put(subscriberKey(chatId), value);
+  };
+  let metadata = params?.metadata || { mayura: true, sudha: true, prajavani: true };
+  
+  await env.SUBSCRIBERS.put(subscriberKey(chatId), JSON.stringify(valueObj), { metadata });
 }
 
 async function removeSubscriber(env, chatId) {
   await env.SUBSCRIBERS.delete(subscriberKey(chatId));
 }
 
-async function listSubscriberIds(env) {
+async function listSubscriberIds(env, series) {
   const out = [];
   let cursor;
 
   do {
     const page = await env.SUBSCRIBERS.list({ cursor, limit: 1000 });
     for (const key of page.keys) {
+      let chatId;
       if (key.name.startsWith("sub:")) {
-        out.push(key.name.slice(4));
+        chatId = key.name.slice(4);
       } else if (/^-?\d+$/.test(key.name)) {
-        out.push(key.name);
+        chatId = key.name;
+      }
+      
+      if (chatId) {
+        if (!series || key.metadata === undefined || key.metadata[series] === true) {
+          out.push(chatId);
+        }
       }
     }
     cursor = page.list_complete ? undefined : page.cursor;
