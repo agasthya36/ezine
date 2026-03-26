@@ -31,6 +31,7 @@ Admin:
 - `POST /admin/run-monthly?token=<ADMIN_TOKEN>`
 - `POST /admin/run-weekly-sudha?token=<ADMIN_TOKEN>`
 - `POST /admin/run-daily-prajavani?token=<ADMIN_TOKEN>`
+- `POST /admin/setup-menu?token=<ADMIN_TOKEN>`
 
 Admin token can also be sent via header:
 - `x-admin-token: <ADMIN_TOKEN>`

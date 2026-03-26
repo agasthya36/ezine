@@ -4,6 +4,7 @@ const IMPORT_SUBSCRIBERS_PATH = "/admin/import-subs";
 const RUN_MONTHLY_PATH = "/admin/run-monthly";
 const RUN_WEEKLY_SUDHA_PATH = "/admin/run-weekly-sudha";
 const RUN_DAILY_PRAJAVANI_PATH = "/admin/run-daily-prajavani";
+const SETUP_MENU_PATH = "/admin/setup-menu";
 
 const SERIES = {
   mayura: {
@@ -66,6 +67,10 @@ export default {
 
     if (request.method === "POST" && url.pathname === RUN_DAILY_PRAJAVANI_PATH) {
       return handleManualRunPrajavani(request, env, ctx);
+    }
+
+    if (request.method === "POST" && url.pathname === SETUP_MENU_PATH) {
+      return handleSetupMenu(request, env);
     }
 
     if (request.method === "POST" && url.pathname === `/${env.SECRET_PATH}`) {
@@ -279,6 +284,35 @@ async function handleManualRunPrajavani(request, env, ctx) {
 
   ctx.waitUntil(runBroadcast(env, "prajavani"));
   return json({ status: "scheduled", series: "prajavani" });
+}
+
+async function handleSetupMenu(request, env) {
+  if (!isAdminAuthorized(request, env)) {
+    return new Response("forbidden", { status: 403 });
+  }
+
+  const commands = [
+    { command: "start", description: "Subscribe to e-zine updates" },
+    { command: "prefs", description: "Manage Subscriptions" },
+    { command: "latest_mayura", description: "Mayura (monthly)" },
+    { command: "latest_sudha", description: "Sudha (weekly)" },
+    { command: "latest_prajavani", description: "Prajavani (daily)" },
+    { command: "stop", description: "Unsubscribe from all" }
+  ];
+
+  const endpoint = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setMyCommands`;
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ commands }),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    return json({ error: "Failed to set commands", details: text }, 500);
+  }
+
+  return json({ status: "success", commands });
 }
 
 function isAdminAuthorized(request, env) {
