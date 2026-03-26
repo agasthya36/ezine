@@ -47,6 +47,13 @@ PUBLICATIONS = {
         "default_date_mode": "today",
         "default_edition": 4,
     },
+    "deccanherald": {
+        "api_base": "https://api-epaper-prod.deccanherald.com",
+        "publisher": "DH",
+        "output_prefix": "deccanherald",
+        "default_date_mode": "today",
+        "default_edition": 2,
+    },
 }
 
 
@@ -389,12 +396,12 @@ def main():
     cfg = PUBLICATIONS[args.publication]
     edition_date = args.date or default_date_for(args.publication)
 
-    if args.publication == "prajavani":
+    if cfg.get("publisher"):
         requested_yyyymmdd = date_ddmmyyyy_to_yyyymmdd(edition_date)
         edition_number = args.edition or cfg["default_edition"]
 
         print(
-            f"\n[1/4] Fetching Prajavani editions and available dates "
+            f"\n[1/4] Fetching {args.publication.capitalize()} editions and available dates "
             f"for requested date={edition_date} (edition={edition_number}) …"
         )
         editions = get_prajavani_editions(cfg["api_base"], cfg["publisher"])
@@ -402,7 +409,7 @@ def main():
         if edition_number not in edition_numbers:
             sample = ", ".join(str(x) for x in sorted(edition_numbers)[:15])
             raise RuntimeError(
-                f"Edition {edition_number} is not available for Prajavani. "
+                f"Edition {edition_number} is not available for {args.publication.capitalize()}. "
                 f"Known edition numbers include: {sample}"
             )
 
@@ -417,7 +424,7 @@ def main():
         else:
             print(f"      Using requested date: {resolved_yyyymmdd}")
 
-        print("\n[2/4] Fetching Prajavani page metadata …")
+        print(f"\n[2/4] Fetching {args.publication.capitalize()} page metadata …")
         payload = get_prajavani_data(
             cfg["api_base"], cfg["publisher"], edition_number, resolved_yyyymmdd
         )
@@ -428,7 +435,7 @@ def main():
             pdf_urls = pdf_urls[:args.pages]
             print(f"      Limiting pages due to --pages={args.pages} (from {total_discovered})")
         if not pdf_urls:
-            raise RuntimeError("No page PDFs found in Prajavani payload.")
+            raise RuntimeError(f"No page PDFs found in {args.publication.capitalize()} payload.")
         print(f"      Pages discovered: {len(pdf_urls)}")
 
         tmp_dir = Path(args.tmp)
@@ -440,7 +447,8 @@ def main():
         if args.output:
             out_pdf = Path(args.output)
         else:
-            out_pdf = Path(f"prajavani_{resolved_yyyymmdd}_e{edition_number}.pdf")
+            prefix = cfg["output_prefix"]
+            out_pdf = Path(f"{prefix}_{resolved_yyyymmdd}_e{edition_number}.pdf")
 
         print("\n[4/4] Merging page PDFs …")
         merge_pdfs(pdf_paths, out_pdf)

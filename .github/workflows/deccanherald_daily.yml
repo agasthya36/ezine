@@ -1,0 +1,72 @@
+name: Deccan Herald Daily Upload + Broadcast
+
+on:
+  schedule:
+    - cron: "30 1 * * *" # Daily at 01:30 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  download-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests aiohttp pypdf
+
+      - name: Compute edition date
+        id: date
+        run: |
+          echo "edition_date=$(date +'%d/%m/%Y')" >> $GITHUB_OUTPUT
+          echo "date_key=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      - name: Download Deccan Herald edition
+        run: |
+          python mayura_download.py \
+            --publication deccanherald \
+            --edition 2 \
+            --date "${{ steps.date.outputs.edition_date }}" \
+            --output deccanherald_latest.pdf
+
+      - name: Upload PDF to Cloudflare R2 cache
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx -y wrangler r2 object put \
+            "mayura-pdf-cache/pdfs/deccanherald/${{ steps.date.outputs.date_key }}/deccanherald_${{ steps.date.outputs.date_key }}_e2.pdf" \
+            --file deccanherald_latest.pdf \
+            --remote
+
+      - name: Trigger Worker daily Deccan Herald broadcast from cache
+        env:
+          WORKER_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
+          WORKER_ADMIN_TOKEN: ${{ secrets.WORKER_ADMIN_TOKEN }}
+        run: |
+          BASE="${WORKER_BASE_URL%/}"
+          URL="${BASE}/admin/run-daily-deccanherald"
+          RESP="$(curl -sS -w '\n%{http_code}' -X POST "$URL" -H "x-admin-token: ${WORKER_ADMIN_TOKEN}")"
+          BODY="$(echo "$RESP" | sed '$d')"
+          CODE="$(echo "$RESP" | tail -n1)"
+          echo "Worker response code: $CODE"
+          echo "Worker response body: $BODY"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::Worker trigger failed with HTTP $CODE"
+            exit 1
+          fi

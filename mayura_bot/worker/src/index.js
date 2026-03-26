@@ -4,6 +4,7 @@ const IMPORT_SUBSCRIBERS_PATH = "/admin/import-subs";
 const RUN_MONTHLY_PATH = "/admin/run-monthly";
 const RUN_WEEKLY_SUDHA_PATH = "/admin/run-weekly-sudha";
 const RUN_DAILY_PRAJAVANI_PATH = "/admin/run-daily-prajavani";
+const RUN_DAILY_DECCANHERALD_PATH = "/admin/run-daily-deccanherald";
 const SETUP_MENU_PATH = "/admin/setup-menu";
 
 const SERIES = {
@@ -25,6 +26,12 @@ const SERIES = {
     expectedR2Key: (periodKey) => `pdfs/prajavani/${periodKey}/prajavani_${periodKey}_e4.pdf`,
     filename: (periodKey) => `prajavani_${periodKey}_e4.pdf`,
   },
+  deccanherald: {
+    label: "Deccan Herald",
+    cadence: "daily",
+    expectedR2Key: (periodKey) => `pdfs/deccanherald/${periodKey}/deccanherald_${periodKey}_e2.pdf`,
+    filename: (periodKey) => `deccanherald_${periodKey}_e2.pdf`,
+  },
 };
 
 export default {
@@ -32,13 +39,14 @@ export default {
     const cron = event.cron;
     // "30 2 2 * *"  → monthly Mayura (2nd of month at 02:30 UTC)
     // "30 2 * * 2"  → weekly Sudha (Tuesday at 02:30 UTC)
-    // "30 1 * * *"  → daily Prajavani (01:30 UTC)
+    // "30 1 * * *"  → daily Prajavani & Deccan Herald (01:30 UTC)
     if (cron === "30 2 2 * *") {
       ctx.waitUntil(dispatchGithubWorkflow(env, "mayura_monthly.yml"));
     } else if (cron === "30 2 * * 2") {
       ctx.waitUntil(dispatchGithubWorkflow(env, "sudha_weekly.yml"));
     } else if (cron === "30 1 * * *") {
       ctx.waitUntil(dispatchGithubWorkflow(env, "prajavani_daily.yml"));
+      ctx.waitUntil(dispatchGithubWorkflow(env, "deccanherald_daily.yml"));
     }
   },
 
@@ -67,6 +75,10 @@ export default {
 
     if (request.method === "POST" && url.pathname === RUN_DAILY_PRAJAVANI_PATH) {
       return handleManualRunPrajavani(request, env, ctx);
+    }
+
+    if (request.method === "POST" && url.pathname === RUN_DAILY_DECCANHERALD_PATH) {
+      return handleManualRunDeccanherald(request, env, ctx);
     }
 
     if (request.method === "POST" && url.pathname === SETUP_MENU_PATH) {
@@ -109,13 +121,14 @@ async function handleWebhook(request, env, ctx) {
         `ನಮಸ್ಕಾರ ${firstName} 😊`,
         "",
         "You are now subscribed to e-zine updates.",
-        "You will receive Mayura, Sudha, and Prajavani editions as they become available.",
+        "You will receive Mayura, Sudha, Prajavani, and Deccan Herald editions as they become available.",
         "",
         "Commands:",
         "  /prefs            — Manage Subscriptions",
         "  /latest_mayura    — Mayura (monthly)",
         "  /latest_sudha     — Sudha (weekly)",
         "  /latest_prajavani — Prajavani (daily)",
+        "  /latest_deccanherald — Deccan Herald (daily)",
         "  /stop             — Unsubscribe from all",
         "",
         "Questions? Contact @cosmos1609",
@@ -136,8 +149,11 @@ async function handleWebhook(request, env, ctx) {
   } else if (text.startsWith("/latest_prajavani")) {
     ctx.waitUntil(sendLatestToChat(env, chatId, "prajavani"));
     await tgSendMessage(env, chatId, "Fetching Prajavani cached/latest edition. You will receive it shortly.");
+  } else if (text.startsWith("/latest_deccanherald")) {
+    ctx.waitUntil(sendLatestToChat(env, chatId, "deccanherald"));
+    await tgSendMessage(env, chatId, "Fetching Deccan Herald cached/latest edition. You will receive it shortly.");
   } else {
-    await tgSendMessage(env, chatId, "Commands:\n  /start\n  /prefs\n  /latest_mayura\n  /latest_sudha\n  /latest_prajavani\n  /stop");
+    await tgSendMessage(env, chatId, "Commands:\n  /start\n  /prefs\n  /latest_mayura\n  /latest_sudha\n  /latest_prajavani\n  /latest_deccanherald\n  /stop");
   }
 
   return new Response("ok");
@@ -151,7 +167,7 @@ async function handleCallbackQuery(cbq, env, ctx) {
 
   if (data.startsWith("toggle:")) {
     const series = data.slice(7);
-    if (["mayura", "sudha", "prajavani"].includes(series)) {
+    if (["mayura", "sudha", "prajavani", "deccanherald"].includes(series)) {
       const params = await getSubscriberPrefsAndValue(env, chatId);
       if (params) {
         const currentPrefs = params.metadata;
@@ -163,11 +179,16 @@ async function handleCallbackQuery(cbq, env, ctx) {
         
         const isSubscribed = newPrefs[series];
         const seriesEn = series.charAt(0).toUpperCase() + series.slice(1);
-        const seriesKn = series === 'mayura' ? 'ಮಯೂರ' : series === 'sudha' ? 'ಸುಧಾ' : 'ಪ್ರಜಾವಾಣಿ';
         const actionEn = isSubscribed ? "Subscribed to" : "Unsubscribed from";
-        const actionKn = isSubscribed ? "ಗೆ ಚಂದಾದಾರರಾಗಿದ್ದೀರಿ" : " ಚಂದಾದಾರಿಕೆಯನ್ನು ರದ್ದುಗೊಳಿಸಲಾಗಿದೆ";
         
-        await tgAnswerCallbackQuery(env, cbq.id, `${actionEn} ${seriesEn}\n${seriesKn}${actionKn}`, true);
+        let popupText = `${actionEn} ${series === 'deccanherald' ? 'Deccan Herald' : seriesEn}`;
+        if (series !== 'deccanherald') {
+          const seriesKn = series === 'mayura' ? 'ಮಯೂರ' : series === 'sudha' ? 'ಸುಧಾ' : 'ಪ್ರಜಾವಾಣಿ';
+          const actionKn = isSubscribed ? "ಗೆ ಚಂದಾದಾರರಾಗಿದ್ದೀರಿ" : " ಚಂದಾದಾರಿಕೆಯನ್ನು ರದ್ದುಗೊಳಿಸಲಾಗಿದೆ";
+          popupText += `\n${seriesKn}${actionKn}`;
+        }
+        
+        await tgAnswerCallbackQuery(env, cbq.id, popupText, true);
       } else {
         await tgAnswerCallbackQuery(env, cbq.id, `Error: Please /start first.`);
       }
@@ -196,7 +217,8 @@ function generatePrefsKeyboard(prefs) {
     inline_keyboard: [
       [{ text: `${prefs.mayura ? "✅" : "❌"} ಮಯೂರ | Mayura`, callback_data: `toggle:mayura` }],
       [{ text: `${prefs.sudha ? "✅" : "❌"} ಸುಧಾ | Sudha`, callback_data: `toggle:sudha` }],
-      [{ text: `${prefs.prajavani ? "✅" : "❌"} ಪ್ರಜಾವಾಣಿ | Prajavani`, callback_data: `toggle:prajavani` }]
+      [{ text: `${prefs.prajavani ? "✅" : "❌"} ಪ್ರಜಾವಾಣಿ | Prajavani`, callback_data: `toggle:prajavani` }],
+      [{ text: `${prefs.deccanherald ? "✅" : "❌"} Deccan Herald`, callback_data: `toggle:deccanherald` }]
     ]
   };
 }
@@ -286,6 +308,15 @@ async function handleManualRunPrajavani(request, env, ctx) {
   return json({ status: "scheduled", series: "prajavani" });
 }
 
+async function handleManualRunDeccanherald(request, env, ctx) {
+  if (!isAdminAuthorized(request, env)) {
+    return new Response("forbidden", { status: 403 });
+  }
+
+  ctx.waitUntil(runBroadcast(env, "deccanherald"));
+  return json({ status: "scheduled", series: "deccanherald" });
+}
+
 async function handleSetupMenu(request, env) {
   if (!isAdminAuthorized(request, env)) {
     return new Response("forbidden", { status: 403 });
@@ -297,6 +328,7 @@ async function handleSetupMenu(request, env) {
     { command: "latest_mayura", description: "Mayura (monthly)" },
     { command: "latest_sudha", description: "Sudha (weekly)" },
     { command: "latest_prajavani", description: "Prajavani (daily)" },
+    { command: "latest_deccanherald", description: "Deccan Herald (daily)" },
     { command: "stop", description: "Unsubscribe from all" }
   ];
 
@@ -560,7 +592,7 @@ async function tgUploadDocument(env, chatId, bytes, filename, fileCaption) {
 async function getSubscriberPrefsAndValue(env, chatId) {
   const { value, metadata } = await env.SUBSCRIBERS.getWithMetadata(subscriberKey(chatId));
   if (!value) return null;
-  return { value: JSON.parse(value), metadata: metadata || { mayura: true, sudha: true, prajavani: true } };
+  return { value: JSON.parse(value), metadata: metadata || { mayura: true, sudha: true, prajavani: true, deccanherald: true } };
 }
 
 async function updatePreferences(env, chatId, newPrefs) {
@@ -568,7 +600,7 @@ async function updatePreferences(env, chatId, newPrefs) {
   if (!params) {
     params = {
       value: { first_name: "unknown", subscribed_at: new Date().toISOString() },
-      metadata: { mayura: true, sudha: true, prajavani: true },
+      metadata: { mayura: true, sudha: true, prajavani: true, deccanherald: true },
     };
   }
   const updatedMetadata = { ...params.metadata, ...newPrefs };
@@ -582,7 +614,7 @@ async function addSubscriber(env, chatId, firstName) {
     first_name: firstName,
     subscribed_at: new Date().toISOString(),
   };
-  let metadata = params?.metadata || { mayura: true, sudha: true, prajavani: true };
+  let metadata = params?.metadata || { mayura: true, sudha: true, prajavani: true, deccanherald: true };
   
   await env.SUBSCRIBERS.put(subscriberKey(chatId), JSON.stringify(valueObj), { metadata });
 }
@@ -664,12 +696,14 @@ const R2_KEY_PATTERN = {
   mayura:    /^pdfs\/\d{4}-\d{2}\/mayura_(\d{4}-\d{2})\.pdf$/,
   sudha:     /^pdfs\/sudha\/\d{4}-W\d{2}\/sudha_(\d{4}-W\d{2})\.pdf$/,
   prajavani: /^pdfs\/prajavani\/\d{4}-\d{2}-\d{2}\/prajavani_(\d{4}-\d{2}-\d{2})_e4\.pdf$/,
+  deccanherald: /^pdfs\/deccanherald\/\d{4}-\d{2}-\d{2}\/deccanherald_(\d{4}-\d{2}-\d{2})_e2\.pdf$/,
 };
 
 const R2_KEY_PREFIX = {
   mayura:    "pdfs/",
   sudha:     "pdfs/sudha/",
   prajavani: "pdfs/prajavani/",
+  deccanherald: "pdfs/deccanherald/",
 };
 
 async function findLatestPeriodKeyFromR2(env, series) {
