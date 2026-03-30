@@ -51,19 +51,14 @@ jobs:
             --file sudha_latest.pdf \
             --remote
 
-      - name: Trigger Worker weekly Sudha broadcast from cache
+      - name: Broadcast Sudha to subscribers
         env:
-          WORKER_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
-          WORKER_ADMIN_TOKEN: ${{ secrets.WORKER_ADMIN_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          BASE="${WORKER_BASE_URL%/}"
-          URL="${BASE}/admin/run-weekly-sudha"
-          RESP="$(curl -sS -w '\n%{http_code}' -X POST "$URL" -H "x-admin-token: ${WORKER_ADMIN_TOKEN}")"
-          BODY="$(echo "$RESP" | sed '$d')"
-          CODE="$(echo "$RESP" | tail -n1)"
-          echo "Worker response code: $CODE"
-          echo "Worker response body: $BODY"
-          if [ "$CODE" != "200" ]; then
-            echo "::error::Worker trigger failed with HTTP $CODE"
-            exit 1
-          fi
+          python mayura_broadcast.py \
+            --publication sudha \
+            --date-key "${{ steps.date.outputs.week_key }}" \
+            --pdf-file sudha_latest.pdf \
+            --kv-namespace-id 16f852aca70c4596a93845091d054e10

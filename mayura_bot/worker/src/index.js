@@ -1,10 +1,8 @@
 const HEALTH_PATH = "/health";
 const SUBSCRIBERS_PATH = "/subscribers";
 const IMPORT_SUBSCRIBERS_PATH = "/admin/import-subs";
-const RUN_MONTHLY_PATH = "/admin/run-monthly";
-const RUN_WEEKLY_SUDHA_PATH = "/admin/run-weekly-sudha";
-const RUN_DAILY_PRAJAVANI_PATH = "/admin/run-daily-prajavani";
-const RUN_DAILY_DECCANHERALD_PATH = "/admin/run-daily-deccanherald";
+
+
 const SETUP_MENU_PATH = "/admin/setup-menu";
 const CHECK_HEALTH_PATH = "/admin/check-health";
 
@@ -72,21 +70,6 @@ export default {
       return handleImportSubscribers(request, env);
     }
 
-    if (request.method === "POST" && url.pathname === RUN_MONTHLY_PATH) {
-      return handleManualRunMayura(request, env, ctx);
-    }
-
-    if (request.method === "POST" && url.pathname === RUN_WEEKLY_SUDHA_PATH) {
-      return handleManualRunSudha(request, env, ctx);
-    }
-
-    if (request.method === "POST" && url.pathname === RUN_DAILY_PRAJAVANI_PATH) {
-      return handleManualRunPrajavani(request, env, ctx);
-    }
-
-    if (request.method === "POST" && url.pathname === RUN_DAILY_DECCANHERALD_PATH) {
-      return handleManualRunDeccanherald(request, env, ctx);
-    }
 
     if (request.method === "POST" && url.pathname === SETUP_MENU_PATH) {
       return handleSetupMenu(request, env);
@@ -292,42 +275,6 @@ async function handleImportSubscribers(request, env) {
   return json({ imported: ids.length });
 }
 
-async function handleManualRunMayura(request, env, ctx) {
-  if (!isAdminAuthorized(request, env)) {
-    return new Response("forbidden", { status: 403 });
-  }
-
-  ctx.waitUntil(runBroadcast(env, "mayura"));
-  return json({ status: "scheduled", series: "mayura" });
-}
-
-async function handleManualRunSudha(request, env, ctx) {
-  if (!isAdminAuthorized(request, env)) {
-    return new Response("forbidden", { status: 403 });
-  }
-
-  ctx.waitUntil(runBroadcast(env, "sudha"));
-  return json({ status: "scheduled", series: "sudha" });
-}
-
-async function handleManualRunPrajavani(request, env, ctx) {
-  if (!isAdminAuthorized(request, env)) {
-    return new Response("forbidden", { status: 403 });
-  }
-
-  ctx.waitUntil(runBroadcast(env, "prajavani"));
-  return json({ status: "scheduled", series: "prajavani" });
-}
-
-async function handleManualRunDeccanherald(request, env, ctx) {
-  if (!isAdminAuthorized(request, env)) {
-    return new Response("forbidden", { status: 403 });
-  }
-
-  ctx.waitUntil(runBroadcast(env, "deccanherald"));
-  return json({ status: "scheduled", series: "deccanherald" });
-}
-
 async function handleSetupMenu(request, env) {
   if (!isAdminAuthorized(request, env)) {
     return new Response("forbidden", { status: 403 });
@@ -373,28 +320,6 @@ async function sendLatestToChat(env, chatId, series) {
     }
   } catch (err) {
     await tgSendMessage(env, chatId, `Failed to send ${series} edition: ${String(err)}`);
-  }
-}
-
-async function runBroadcast(env, series) {
-  const periodKey = getPeriodKey(series);
-  const subscribers = await listSubscriberIds(env, series);
-
-  if (!subscribers.length) {
-    return;
-  }
-
-  const seedChatId = subscribers[0];
-  const { fileId, justUploaded } = await ensurePdfAndFileId(env, series, periodKey, seedChatId);
-  const fileCaption = caption(series, periodKey);
-
-  for (const chatId of subscribers) {
-    if (justUploaded && chatId === seedChatId) continue; // already sent via upload
-    try {
-      await tgSendDocumentByFileId(env, chatId, fileId, fileCaption);
-    } catch (err) {
-      console.error(`send failed for ${chatId}`, err);
-    }
   }
 }
 
