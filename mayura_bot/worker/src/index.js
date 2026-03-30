@@ -6,6 +6,10 @@ const RUN_WEEKLY_SUDHA_PATH = "/admin/run-weekly-sudha";
 const RUN_DAILY_PRAJAVANI_PATH = "/admin/run-daily-prajavani";
 const RUN_DAILY_DECCANHERALD_PATH = "/admin/run-daily-deccanherald";
 const SETUP_MENU_PATH = "/admin/setup-menu";
+const CHECK_HEALTH_PATH = "/admin/check-health";
+
+// How long (ms) to wait before re-alerting about the same webhook error
+const ALERT_COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 const SERIES = {
   mayura: {
@@ -40,6 +44,7 @@ export default {
     // "30 2 2 * *"  → monthly Mayura (2nd of month at 02:30 UTC)
     // "30 2 * * 2"  → weekly Sudha (Tuesday at 02:30 UTC)
     // "30 1 * * *"  → daily Prajavani & Deccan Herald (01:30 UTC)
+    // "0 * * * *"   → hourly webhook health check
     if (cron === "30 2 2 * *") {
       ctx.waitUntil(dispatchGithubWorkflow(env, "mayura_monthly.yml"));
     } else if (cron === "30 2 * * 2") {
@@ -47,6 +52,8 @@ export default {
     } else if (cron === "30 1 * * *") {
       ctx.waitUntil(dispatchGithubWorkflow(env, "prajavani_daily.yml"));
       ctx.waitUntil(dispatchGithubWorkflow(env, "deccanherald_daily.yml"));
+    } else if (cron === "0 * * * *") {
+      ctx.waitUntil(runWebhookHealthCheck(env));
     }
   },
 
@@ -83,6 +90,10 @@ export default {
 
     if (request.method === "POST" && url.pathname === SETUP_MENU_PATH) {
       return handleSetupMenu(request, env);
+    }
+
+    if (request.method === "POST" && url.pathname === CHECK_HEALTH_PATH) {
+      return handleManualHealthCheck(request, env);
     }
 
     if (request.method === "POST" && url.pathname === `/${env.SECRET_PATH}`) {
@@ -744,3 +755,82 @@ async function dispatchGithubWorkflow(env, workflowFile) {
     throw new Error(`GitHub dispatch failed (${resp.status}): ${body}`);
   }
 }
+
+// ── Webhook health check ─────────────────────────────────────────────────────
+
+async function runWebhookHealthCheck(env) {
+  if (!env.ADMIN_CHAT_ID) return; // not configured, skip silently
+
+  try {
+    const endpoint = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`;
+    const resp = await fetch(endpoint);
+    if (!resp.ok) {
+      await sendAdminAlert(env, `⚠️ *Bot health check failed*\nCould not call getWebhookInfo (HTTP ${resp.status}).`);
+      return;
+    }
+
+    const data = await resp.json();
+    const info = data.result;
+
+    // Check if there's a recent error (within last 2 hours)
+    const twoHoursAgo = Math.floor(Date.now() / 1000) - 2 * 60 * 60;
+    if (info.last_error_date && info.last_error_date > twoHoursAgo) {
+      const errorTime = new Date(info.last_error_date * 1000).toISOString();
+      const pending = info.pending_update_count ?? 0;
+      const msg = [
+        `🚨 *Bot webhook error detected*`,
+        ``,
+        `*Error:* \`${info.last_error_message}\``,
+        `*Time:* ${errorTime}`,
+        `*Pending updates:* ${pending}`,
+        `*Webhook URL:* \`${info.url}\``,
+        ``,
+        `Check Cloudflare Workers secrets and redeploy if needed.`,
+      ].join("\n");
+      await sendAdminAlert(env, msg);
+    }
+  } catch (err) {
+    console.error("Health check error:", err);
+    await sendAdminAlert(env, `⚠️ *Bot health check threw an exception*\n\`${String(err)}\``);
+  }
+}
+
+async function handleManualHealthCheck(request, env) {
+  if (!isAdminAuthorized(request, env)) {
+    return new Response("forbidden", { status: 403 });
+  }
+  await runWebhookHealthCheck(env);
+  return json({ status: "health check triggered" });
+}
+
+async function sendAdminAlert(env, message) {
+  if (!env.ADMIN_CHAT_ID) return;
+
+  // Cooldown: only alert once per ALERT_COOLDOWN_MS to avoid spam
+  const cooldownKey = "alert:last_sent";
+  const lastSentRaw = await env.SUBSCRIBERS.get(cooldownKey);
+  if (lastSentRaw) {
+    const lastSent = Number(lastSentRaw);
+    if (Date.now() - lastSent < ALERT_COOLDOWN_MS) {
+      console.log("Admin alert suppressed (cooldown active)");
+      return;
+    }
+  }
+
+  const endpoint = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`;
+  await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      chat_id: env.ADMIN_CHAT_ID,
+      text: message,
+      parse_mode: "Markdown",
+    }),
+  });
+
+  // Record when we last sent an alert
+  await env.SUBSCRIBERS.put(cooldownKey, String(Date.now()), {
+    expirationTtl: Math.ceil(ALERT_COOLDOWN_MS / 1000),
+  });
+}
+

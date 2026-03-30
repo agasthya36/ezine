@@ -14,11 +14,12 @@ bucket_name = "mayura-pdf-cache"
 GITHUB_REPO = "agasthya36/ezine"
 
 [secrets]
-required = ["SECRET_PATH", "GITHUB_TOKEN", "TELEGRAM_BOT_TOKEN", "CLOUDFLARE_API", "ADMIN_TOKEN"]
+required = ["SECRET_PATH", "GITHUB_TOKEN", "TELEGRAM_BOT_TOKEN", "CLOUDFLARE_API", "ADMIN_TOKEN", "ADMIN_CHAT_ID"]
 
 [triggers]
 crons = [
   "30 2 2 * *",   # Mayura: 2nd of every month at 02:30 UTC (08:00 IST)
   "30 2 * * 2",   # Sudha: every Tuesday at 02:30 UTC (08:00 IST)
   "30 1 * * *",   # Prajavani: every day at 01:30 UTC (07:00 IST)
+  "0 * * * *",    # Health check: every hour
 ]
