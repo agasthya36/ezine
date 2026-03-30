@@ -52,6 +52,8 @@ export default {
       ctx.waitUntil(dispatchGithubWorkflow(env, "deccanherald_daily.yml"));
     } else if (cron === "0 * * * *") {
       ctx.waitUntil(runWebhookHealthCheck(env));
+    } else if (cron === "15 3 * * *") {
+      ctx.waitUntil(pruneR2Cache(env));
     }
   },
 
@@ -678,6 +680,42 @@ async function dispatchGithubWorkflow(env, workflowFile) {
   if (!resp.ok) {
     const body = await resp.text();
     throw new Error(`GitHub dispatch failed (${resp.status}): ${body}`);
+  }
+}
+
+async function pruneR2Cache(env) {
+  const itemsToKeep = 3;
+
+  for (const series of Object.keys(SERIES)) {
+    const re = R2_KEY_PATTERN[series];
+    const prefix = R2_KEY_PREFIX[series];
+    
+    // List all objects for the given prefix
+    // (Note: mayura prefix "pdfs/" will list all, so we use the regex to filter)
+    const listed = await env.PDF_CACHE.list({ prefix, limit: 1000 });
+    
+    const candidates = [];
+    for (const obj of listed.objects) {
+      const m = obj.key.match(re);
+      if (m) {
+        candidates.push({ key: obj.key, period: m[1] });
+      }
+    }
+    
+    // Sort descending by period key so newest are first
+    candidates.sort((a, b) => b.period.localeCompare(a.period));
+    
+    // Remove all but the first `itemsToKeep`
+    const toDelete = candidates.slice(itemsToKeep).map(c => c.key);
+    
+    if (toDelete.length > 0) {
+      console.log(`Pruning ${series}: keeping latest ${itemsToKeep}, deleting ${toDelete.length} objects.`);
+      // Delete in batches since R2 delete supports array of string keys, up to 1000 per call,
+      // but according to CF Workers API env.BUCKET.delete(keys) works
+      await env.PDF_CACHE.delete(toDelete);
+    } else {
+      console.log(`Pruning ${series}: nothing to prune (found ${candidates.length} items).`);
+    }
   }
 }
 
